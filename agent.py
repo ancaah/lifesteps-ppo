@@ -216,10 +216,11 @@ class PPO_Agent(Agent):
             rewards.append(reward)
             terminations.append(terminated)
 
-    def play_n_timesteps(self, envs :gym.vector.VectorEnv, memory :memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
+    def play_n_timesteps(self, envs :gym.vector.VectorEnv, mem :memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
+        
         batch = envs.num_envs * single_batch_ts
         updates = t_timesteps // single_batch_ts
-        m = memory
+        m = mem
 
         obs, info = envs.reset()
 
@@ -236,17 +237,30 @@ class PPO_Agent(Agent):
                 m.terminateds[t] = terminated
                 m.truncateds[t] = truncated
 
-
+            m.obss[t] = observation
 
             # calc advantages
-            m.advantages = [utils.calc_adv_list(T-1, t, m.rewards[:,env_id], m.values[:,env_id], self._gamma, self._lmbda, m.terminateds[:,env_id], m.truncateds[:,env_id], next_val) for env_id in range(m.num_envs)]
+            m.advantages = [utils.calc_adv_list(single_batch_ts-1, t, m.rewards[:,env_id], m.values[:,env_id], self._gamma, self._lmbda, m.terminateds[:,env_id], m.truncateds[:,env_id], next_val) for env_id in range(m.num_envs)]
             # calc returns
-            m.returns = [utils.calc_returns(T-1, t, m.rewards[:,env_id], self._gamma, m.terminateds[:,env_id], m.truncateds[:,env_id]) for env_id in range(m.num_envs)]
+            m.returns = [utils.calc_returns(single_batch_ts-1, t, m.rewards[:,env_id], self._gamma, m.terminateds[:,env_id], m.truncateds[:,env_id]) for env_id in range(m.num_envs)]
 
+            m.flatten()
 
             for epoch in range(epochs):
-            
+                
+                start_ind = epoch * minibatch_size
+                end_ind = start_ind + minibatch_size 
+
+                ids = np.arange(start_ind, end_ind, 1)
+
                 for mb in range(minibatch_size):
+                    
+                    m.f_actions
+                    _, values = self.get_action(m.f_obs[ids], m.f_actions[ids])
+
+
+                    
+                    loss_value = tf.losses.MSE(values, m.f_returns[ids])
                     
 
 

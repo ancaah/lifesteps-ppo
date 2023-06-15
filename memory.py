@@ -41,7 +41,7 @@ class Memory():
 
 
     def flatten(self):
-        
+        '''Creates, inside the Memory object, a flattened instance of the np.ndarrays already initialized'''
         self._flattened = True
 
         timesteps = self.timesteps
