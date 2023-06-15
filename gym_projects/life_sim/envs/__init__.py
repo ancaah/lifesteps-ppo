@@ -1,0 +1,1 @@
+from life_sim.envs.lifesim import LifeSim

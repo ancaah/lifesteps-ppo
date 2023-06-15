@@ -1,0 +1,123 @@
+'''My environment class'''
+from gymnasium import Env
+from gymnasium.spaces import Box, Discrete
+import numpy as np
+
+
+class LifeSim(Env):
+    '''Life Simulation Environment for the Autonomous Adaptive Systems'''
+
+    def __init__(self, render_mode=None):
+        # define your environment
+        # action space, observation space
+
+        # Money, Health,
+        # Work Development, Social Development
+        self.observation_space = Box(
+            low=0, high=10, shape=(4,), dtype=np.float32)
+        self.obs_dict = {"money": 0, "health": 1,
+                         "work_development": 2, "social_development": 3}
+
+        # Work, Sport, Sociality
+        self.action_space = Discrete(3)
+
+        # current state
+        # self.state = np.array([3., 3., 1., 1.], dtype=np.float32)
+        self._decreasing_func = np.array([-0.5, -0.3, -0.2, -0.2])
+        self.min_money = 0
+        self.min_health = 0
+        self._current_timestep = 0
+
+        # reward collected
+        self.collected_reward = 0
+        # reward lambda
+        self.l_1 = 1
+        self.l_2 = 0.5
+
+        self.render_mode = render_mode
+
+        self._action_outcome_mapping = {
+            # Work
+            0: [1, 0, 0.3, 0],
+            # Sport
+            1: [0, 1, 0, 0],
+            # Sociality
+            2: [0, 0, 0, 0.4],
+        }
+        self._last_action = None
+
+    def accumulate_reward(self):
+        '''accumulate the total reward using this method'''
+        return self.l_1*(self.state[self.obs_dict["work_development"]]
+                         + self.state[self.obs_dict["social_development"]])
+
+    def _get_obs(self):
+        return self.state
+
+    def _get_info(self):
+        return {"last_action": self._last_action}
+
+    def step(self, action):
+        # take some action
+        self._last_action = action
+        outcome = self._action_outcome_mapping[action]
+        self._current_timestep += 1
+
+        # update state with decreasing function of Work and Social Development
+        new_state = np.add(self.state, self._decreasing_func, dtype=np.float32)
+        new_state = np.clip(new_state, a_min=0, a_max=10)
+        new_state = np.concatenate([[new_state[0], new_state[1]], np.clip([new_state[2], new_state[3]], a_min=0, a_max=5)])
+
+        # update state with action's outcome
+        new_state = np.add(new_state, outcome, dtype=np.float32)
+        new_state = np.clip(new_state, a_min=0, a_max=10)
+
+        self.state = new_state
+
+        observation = self._get_obs()
+        info = self._get_info()
+
+        self.collected_reward += self.accumulate_reward()
+
+        truncated = True if self._current_timestep == self._max_timesteps else False
+        terminated = (self.state[self.obs_dict["money"]]
+                      == 0 or self.state[self.obs_dict["health"]] == 0)
+        
+        reward = self.collected_reward if truncated else 0
+        reward = -100+self.collected_reward if self.terminated else 0
+
+        return observation, reward, terminated, truncated, info
+
+    def render(self, mode="text"):
+        # render your environment (can be a visualisation/print)
+        result = None
+        if mode == "text":
+            result = self._render_text()
+        return result
+
+    def _render_text(self):
+        '''Returns a text representation of the state'''
+        return self.state
+
+    def reset(self, seed=None, options=None, max_timesteps = 300):
+        # reset your environment
+        super().reset(seed=seed)
+
+        np.random.seed(seed)
+        space = np.linspace(2.5, 3.5, 50)
+
+        self.state = np.array([space[np.random.randint(0, len(space))],
+                               space[np.random.randint(0, len(space))],
+                               space[np.random.randint(0, len(space))] / 1.5,
+                               space[np.random.randint(0, len(space))] / 1.5], dtype=np.float32)
+        self.collected_reward = 0
+        self._current_timestep = 0
+        self._max_timesteps = max_timesteps
+
+        observation = self._get_obs()
+        info = self._get_info()
+
+        if self.render_mode == "text":
+            print(self._render_text())
+
+        return observation, info

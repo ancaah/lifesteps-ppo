@@ -1,0 +1,9 @@
+setup.py
+life_sim/__init__.py
+life_sim.egg-info/PKG-INFO
+life_sim.egg-info/SOURCES.txt
+life_sim.egg-info/dependency_links.txt
+life_sim.egg-info/requires.txt
+life_sim.egg-info/top_level.txt
+life_sim/envs/__init__.py
+life_sim/envs/lifesim.py
