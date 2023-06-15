@@ -11,6 +11,8 @@ class LifeSim(Env):
         # define your environment
         # action space, observation space
 
+        self.terminated = False
+        self.truncated = False
         # Money, Health,
         # Work Development, Social Development
         self.observation_space = Box(
@@ -66,7 +68,7 @@ class LifeSim(Env):
         # update state with decreasing function of Work and Social Development
         new_state = np.add(self.state, self._decreasing_func, dtype=np.float32)
         new_state = np.clip(new_state, a_min=0, a_max=10)
-        new_state = np.concatenate([[new_state[0], new_state[1]], np.clip([new_state[2], new_state[3]], a_min=0, a_max=5)])
+        new_state = np.concatenate([[new_state[0], new_state[1]], np.clip([new_state[2], new_state[3]], a_min=0, a_max=10)])
 
         # update state with action's outcome
         new_state = np.add(new_state, outcome, dtype=np.float32)
@@ -79,14 +81,15 @@ class LifeSim(Env):
 
         self.collected_reward += self.accumulate_reward()
 
-        truncated = True if self._current_timestep == self._max_timesteps else False
-        terminated = (self.state[self.obs_dict["money"]]
+        self.truncated = True if self._current_timestep == self._max_timesteps else False
+        
+        self.terminated = (self.state[self.obs_dict["money"]]
                       == 0 or self.state[self.obs_dict["health"]] == 0)
         
-        reward = self.collected_reward if truncated else 0
+        reward = self.collected_reward if self.truncated else 0
         reward = -100+self.collected_reward if self.terminated else 0
 
-        return observation, reward, terminated, truncated, info
+        return observation, reward, self.terminated, self.truncated, info
 
     def render(self, mode="text"):
         # render your environment (can be a visualisation/print)
@@ -99,7 +102,8 @@ class LifeSim(Env):
         '''Returns a text representation of the state'''
         return self.state
 
-    def reset(self, seed=None, options=None, max_timesteps = 300):
+    def reset(self, seed=None, options=None, max_timesteps = 5):
+#    def reset(self, seed=None, options=None):
         # reset your environment
         super().reset(seed=seed)
 
