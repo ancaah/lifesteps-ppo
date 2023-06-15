@@ -254,7 +254,8 @@ class PPO_Agent(Agent):
 
             m.obss[t] = observation
 
-            next_val = self.get_value(observation[np.newaxis]).numpy().squeeze()
+            #next_val = self.get_value(observation[np.newaxis]).numpy().squeeze()
+            next_val = self.get_value(observation).numpy().squeeze()
 
             # calc advantages
             m.advantages = np.array([utils.calc_adv_list(single_batch_ts-1, 0, m.rewards[:, env_id], m.values[:, env_id], self._gamma,
