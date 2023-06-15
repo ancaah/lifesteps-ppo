@@ -10,6 +10,10 @@ class Memory():
 
     def reset(self):
         
+        timesteps = self.timesteps
+        num_envs = self.num_envs
+        obs_shape = self.obs_shape
+
         self.obss = np.zeros(shape=(timesteps,num_envs) + obs_shape)
         self.returns = np.zeros(shape=(timesteps,num_envs))
         self.actions = np.zeros(shape=(timesteps,num_envs))
@@ -18,5 +22,6 @@ class Memory():
         self.terminateds = np.zeros(shape=(timesteps,num_envs))
         self.truncateds = np.zeros(shape=(timesteps,num_envs))
         self.values = np.zeros(shape=(timesteps,num_envs))
+        self.advantages = np.zeros(shape=(timesteps,num_envs))
         
 

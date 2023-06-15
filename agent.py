@@ -8,6 +8,7 @@ from tensorflow_probability import distributions as tfd
 import gymnasium as gym
 import tqdm.notebook as tqdm
 import memory
+import utils
 
 
 class Agent(ABC):
@@ -139,6 +140,7 @@ class PPO_Agent(Agent):
         return self.critic(x)
     
     def get_action(self, x, action=None):
+        '''Returns the selected action and the probability of that action'''
         logits = self.actor(x)
         probs = tfd.Categorical(probs=logits)
         if action is None:
@@ -214,7 +216,7 @@ class PPO_Agent(Agent):
             rewards.append(reward)
             terminations.append(terminated)
 
-    def play_n_timesteps(self, envs :gym.vector.VectorEnv, memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
+    def play_n_timesteps(self, envs :gym.vector.VectorEnv, memory :memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
         batch = envs.num_envs * single_batch_ts
         updates = t_timesteps // single_batch_ts
         m = memory
@@ -224,9 +226,22 @@ class PPO_Agent(Agent):
         for update in tqdm(range(updates) + 1):
             
             for t in range(single_batch_ts):
+
+                m.obss[t] = observation
                 
-                actions = self.get_action(obs)
-                envs.step(actions)
+                actions, probs = self.get_action(obs)
+                observation, reward, terminated, truncated, info = envs.step(actions)
+                
+                m.rewards[t] = reward
+                m.terminateds[t] = terminated
+                m.truncateds[t] = truncated
+
+
+
+            # calc advantages
+            m.advantages = [utils.calc_adv_list(T-1, t, m.rewards[:,env_id], m.values[:,env_id], self._gamma, self._lmbda, m.terminateds[:,env_id], m.truncateds[:,env_id], next_val) for env_id in range(m.num_envs)]
+            # calc returns
+            m.returns = [utils.calc_returns(T-1, t, m.rewards[:,env_id], self._gamma, m.terminateds[:,env_id], m.truncateds[:,env_id]) for env_id in range(m.num_envs)]
 
 
             for epoch in range(epochs):
