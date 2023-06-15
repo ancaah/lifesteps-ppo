@@ -231,6 +231,59 @@ class PPO_Agent(Agent):
 
     def play_n_timesteps(self, envs: gym.vector.VectorEnv, mem: memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
 
+#        self._build_network(a.input_shape, a.n_outputs)
+
+        batch = envs.num_envs * single_batch_ts
+        updates = t_timesteps // single_batch_ts
+        m = mem
+
+        observation, info = envs.reset()
+        
+        for update in tqdm(range(updates)):
+            #print(update)
+            for t in range(single_batch_ts):
+                #print(t)
+                m.obss[t] = observation
+
+                actions, probs = self.get_action(observation)
+                observation, reward, terminated, truncated, info = envs.step(actions.numpy().squeeze().tolist())
+
+                m.rewards[t] = reward
+                m.terminateds[t] = terminated
+                m.truncateds[t] = truncated
+
+            m.obss[t] = observation
+
+            next_val = self.get_value(observation[np.newaxis]).numpy().squeeze()
+
+            # calc advantages
+            m.advantages = np.array([utils.calc_adv_list(single_batch_ts-1, 0, m.rewards[:, env_id], m.values[:, env_id], self._gamma,
+                                                self._lmbda, m.terminateds[:, env_id], m.truncateds[:, env_id], next_val[env_id]) for env_id in range(m.num_envs)], dtype=np.float32)
+            # calc returns
+            m.returns = np.array([utils.calc_returns(single_batch_ts-1, 0, m.rewards[:, env_id], self._gamma,
+                                            m.terminateds[:, env_id], m.truncateds[:, env_id]) for env_id in range(m.num_envs)], dtype=np.float32)
+
+            m.flatten()
+
+            for epoch in range(epochs):
+
+                start_ind = epoch * minibatch_size
+                end_ind = start_ind + minibatch_size
+
+                ids = np.arange(start_ind, end_ind, 1)
+
+                for mb in range(minibatch_size):
+
+                    mb_obs = np.array(m.f_obss[ids])
+                    mb_adv = np.array(m.f_advantages[ids])
+                    mb_probs = np.array(m.f_probs[ids])
+                    mb_returns = np.array(m.f_returns[ids])
+                    
+                    loss_actor, loss_value = self.train_step_ppo(mb_obs, mb_adv, mb_probs, mb_returns)
+
+    '''
+    def play_n_timesteps(self, envs: gym.vector.VectorEnv, mem: memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
+
         batch = envs.num_envs * single_batch_ts
         updates = t_timesteps // single_batch_ts
         m = mem
@@ -279,7 +332,7 @@ class PPO_Agent(Agent):
                     
                     loss_actor, loss_value = self.train_step_ppo(mb_obs, mb_adv, mb_probs, mb_returns)
                     #loss_actor, loss_value = self.train_step_ppo(m, ids)
-                    '''
+                    
                     with tf.GradientTape() as tape_actor, tf.GradientTape() as tape_critic:
 
                         _, values = self.get_action(
@@ -293,7 +346,7 @@ class PPO_Agent(Agent):
                         loss_value = tf.losses.MSE(values, m.f_returns[ids])
                     
                     grads_actor
-                    '''
+                    
 
 
 @tf.function
@@ -379,7 +432,7 @@ def play_n_timesteps(a, envs: gym.vector.VectorEnv, mem: memory.Memory, t_timest
                 
                 loss_actor, loss_value = a.train_step_ppo(mb_obs, mb_adv, mb_probs, mb_returns)
 
-'''                    
+             
 def main(T, actor, critic, env):
 
     obs, info = env.reset()
