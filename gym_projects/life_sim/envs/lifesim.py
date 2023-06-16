@@ -7,12 +7,14 @@ import numpy as np
 class LifeSim(Env):
     '''Life Simulation Environment for the Autonomous Adaptive Systems'''
 
+    metadata = {"render_modes": ["text"]}
+
     def __init__(self, render_mode=None):
         # define your environment
         # action space, observation space
 
-        self.terminated = False
-        self.truncated = False
+        #self.terminated = False
+        #self.truncated = False
         # Money, Health,
         # Work Development, Social Development
         self.observation_space = Box(
@@ -25,7 +27,7 @@ class LifeSim(Env):
 
         # current state
         # self.state = np.array([3., 3., 1., 1.], dtype=np.float32)
-        self._decreasing_func = np.array([-0.5, -0.3, -0.2, -0.2])
+        self._decreasing_func = np.array([-0.5, -0.3, -0.07, -0.1])
         self.min_money = 0
         self.min_health = 0
         self._current_timestep = 0
@@ -36,6 +38,8 @@ class LifeSim(Env):
         self.l_1 = 1
         self.l_2 = 0.5
 
+
+        assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
 
         self._action_outcome_mapping = {
@@ -46,6 +50,12 @@ class LifeSim(Env):
             # Sociality
             2: [0, 0, 0, 0.4],
         }
+        self._action_names = {
+            0: "work",
+            1: "sport",
+            2: "sociality"
+        }
+
         self._last_action = None
 
     def accumulate_reward(self):
@@ -57,11 +67,20 @@ class LifeSim(Env):
         return self.state
 
     def _get_info(self):
-        return {"last_action": self._last_action}
+        return {
+            "last_action": self._last_action,
+            "last_reward": self._last_reward,
+            "last_state": self._last_state
+            }
+    
+    def _set_info(self, state, action, reward):
+        self._last_action = action
+        self._last_reward = reward
+        self._last_state = state
 
     def step(self, action):
         # take some action
-        self._last_action = action
+        #self._last_action = action
         outcome = self._action_outcome_mapping[action]
         self._current_timestep += 1
 
@@ -81,28 +100,39 @@ class LifeSim(Env):
 
         self.collected_reward += self.accumulate_reward()
 
-        self.truncated = True if self._current_timestep == self._max_timesteps else False
+        truncated = True if self._current_timestep == self._max_timesteps else False
         
-        self.terminated = (self.state[self.obs_dict["money"]]
-                      == 0 or self.state[self.obs_dict["health"]] == 0)
+        terminated = (self.state[self.obs_dict["money"]] == 0 or self.state[self.obs_dict["health"]] == 0)
         
-        reward = self.collected_reward if self.truncated else 0
-        reward = -100+self.collected_reward if self.terminated else 0
+        reward = self.collected_reward if truncated else 0
+        reward = -100+self.collected_reward if terminated else 0
 
-        return observation, reward, self.terminated, self.truncated, info
+        self._set_info(new_state, action, reward)
 
-    def render(self, mode="text"):
+        #self.render()
+
+        return observation, reward, terminated, truncated, info
+
+    def render(self):
         # render your environment (can be a visualisation/print)
-        result = None
-        if mode == "text":
-            result = self._render_text()
-        return result
+        #result = None
+        if self.render_mode == "text":
+            #print(self._get_info().get('last_action'))
+            #print(self._action_names.get(0))
+            print(self._render_text())
+            
+        #return result
 
     def _render_text(self):
         '''Returns a text representation of the state'''
-        return self.state
+        i = self._get_info()
+        if i.get('last_action') < 0:
+            return f"State -> {i['last_state']}"
+        else:
+            return f"State -> {i['last_state']}  |  Reward: {i['last_reward']}  |  Last Action: {self._action_names[i['last_action']]}  |"
+        #return f"State -> {i['last_state']}  |  Reward: {i['last_reward']}  |  Last Action:  |"
 
-    def reset(self, seed=None, options=None, max_timesteps = 5):
+    def reset(self, seed=None, options=None, max_timesteps = 300):
 #    def reset(self, seed=None, options=None):
         # reset your environment
         super().reset(seed=seed)
@@ -119,9 +149,11 @@ class LifeSim(Env):
         self._max_timesteps = max_timesteps
 
         observation = self._get_obs()
+        
+        self._set_info(self.state, -1, -1)
         info = self._get_info()
 
-        if self.render_mode == "text":
-            print(self._render_text())
+        #if self.render_mode is not None:
+        #    self.render(self.render_mode)
 
         return observation, info
