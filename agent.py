@@ -107,13 +107,6 @@ class DQN_Agent(Agent):
 class PPO_Agent(Agent):
     def __init__(self, input_shape, n_outputs, gamma, lmbda, epsilon, lr, verbose=0):
 
-        '''physical_devices = tf.config.list_physical_devices('GPU')
-        try:
-            tf.config.experimental.set_memory_growth(physical_devices[0], True)
-        except:
-        # Invalid device or cannot modify virtual devices once initialized.
-            pass
-        '''
         self._verbose = verbose
 
         # self.m = memory
@@ -137,8 +130,8 @@ class PPO_Agent(Agent):
         
         #self._act_array = tf.constant([0, 1, 2])
 
-        #self._optimizer_actor.build(self.actor.trainable_variables)
-        #self._optimizer_critic.build(self.critic.trainable_variables)
+        self.optimizer_actor.build(self.actor.trainable_variables)
+        self.optimizer_critic.build(self.critic.trainable_variables)
 
     def get_value(self, x):
         return self.critic(x)
@@ -199,12 +192,12 @@ class PPO_Agent(Agent):
         ])
 
     @tf.function
-    def train_step_ppo(self, obs, adv, probs, returns):
+    def train_step_ppo(self, obs, actions, adv, probs, returns):
         
         #with tf.device('/physical_device/CPU:0'):
         with tf.GradientTape(persistent=True) as tape:
                 
-            _, new_probs = self.get_action(obs)
+            _, new_probs = self.get_action(obs, actions)
             new_value = self.get_value(obs)
             #self.get_action_and_value
             #new_probs = get_prob_from_action(new_probs, mb_action)
@@ -231,7 +224,8 @@ class PPO_Agent(Agent):
 
     def play_n_timesteps(self, envs: gym.vector.VectorEnv, mem: memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
 
-#        self._build_network(a.input_shape, a.n_outputs)
+        update_mean_actor_loss = []
+        update_mean_critic_loss = []
 
         batch = envs.num_envs * single_batch_ts
         updates = t_timesteps // single_batch_ts
@@ -240,14 +234,18 @@ class PPO_Agent(Agent):
         observation, info = envs.reset()
         
         for update in tqdm(range(updates)):
-            #print(update)
+            
             for t in range(single_batch_ts):
-                #print(t)
+            
                 m.obss[t] = observation
 
                 actions, probs = self.get_action(observation)
-                observation, reward, terminated, truncated, info = envs.step(actions.numpy().squeeze().tolist())
 
+                # the Gymnasium Vectorized Environment step method takes a 1-dimensional list of actions as parameter  
+                observation, reward, terminated, truncated, info = envs.step(actions.numpy().squeeze().tolist())
+                
+                m.actions[t] = actions
+                m.probs[t] = probs
                 m.rewards[t] = reward
                 m.terminateds[t] = terminated
                 m.truncateds[t] = truncated
@@ -266,56 +264,8 @@ class PPO_Agent(Agent):
 
             m.flatten()
 
-            for epoch in range(epochs):
-
-                start_ind = epoch * minibatch_size
-                end_ind = start_ind + minibatch_size
-
-                ids = np.arange(start_ind, end_ind, 1)
-
-                for mb in range(minibatch_size):
-
-                    mb_obs = np.array(m.f_obss[ids])
-                    mb_adv = np.array(m.f_advantages[ids])
-                    mb_probs = np.array(m.f_probs[ids])
-                    mb_returns = np.array(m.f_returns[ids])
-                    
-                    loss_actor, loss_value = self.train_step_ppo(mb_obs, mb_adv, mb_probs, mb_returns)
-
-    '''
-    def play_n_timesteps(self, envs: gym.vector.VectorEnv, mem: memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
-
-        batch = envs.num_envs * single_batch_ts
-        updates = t_timesteps // single_batch_ts
-        m = mem
-
-        observation, info = envs.reset()
-        
-        for update in tqdm(range(updates)):
-            print(update)
-            for t in range(single_batch_ts):
-                print(t)
-                m.obss[t] = observation
-
-                actions, probs = self.get_action(observation)
-                observation, reward, terminated, truncated, info = envs.step(actions)
-
-                m.rewards[t] = reward
-                m.terminateds[t] = terminated
-                m.truncateds[t] = truncated
-
-            m.obss[t] = observation
-
-            next_val = self.get_value(observation)
-
-            # calc advantages
-            m.advantages = [utils.calc_adv_list(single_batch_ts-1, 0, m.rewards[:, env_id], m.values[:, env_id], self._gamma,
-                                                self._lmbda, m.terminateds[:, env_id], m.truncateds[:, env_id], next_val[env_id]) for env_id in range(m.num_envs)]
-            # calc returns
-            m.returns = [utils.calc_returns(single_batch_ts-1, 0, m.rewards[:, env_id], self._gamma,
-                                            m.terminateds[:, env_id], m.truncateds[:, env_id]) for env_id in range(m.num_envs)]
-
-            m.flatten()
+            mb_actor_loss_l = []
+            mb_critic_loss_l = []
 
             for epoch in range(epochs):
 
@@ -327,136 +277,20 @@ class PPO_Agent(Agent):
                 for mb in range(minibatch_size):
 
                     mb_obs = np.array(m.f_obss[ids])
+                    mb_actions = np.array(m.f_actions[ids])
                     mb_adv = np.array(m.f_advantages[ids])
                     mb_probs = np.array(m.f_probs[ids])
                     mb_returns = np.array(m.f_returns[ids])
                     
-                    loss_actor, loss_value = self.train_step_ppo(mb_obs, mb_adv, mb_probs, mb_returns)
-                    #loss_actor, loss_value = self.train_step_ppo(m, ids)
-                    
-                    with tf.GradientTape() as tape_actor, tf.GradientTape() as tape_critic:
+                    loss_actor, loss_value = self.train_step_ppo(mb_obs, mb_actions, mb_adv, mb_probs, mb_returns)
 
-                        _, values = self.get_action(
-                            m.f_obs[ids], m.f_actions[ids])
-                    
-                        ratio = tf.divide(values, m.f_probs[ids])
-                        obj_clip = tf.minimum(ratio*m.f_advantages[ids], tf.clip_by_value(
-                            ratio, 1-self.epsilon, 1+self.epsilon)*m.f_advantages[ids])
-                        obj_clip = tf.reduce_mean(obj_clip)
-                        loss_clip = tf.negative(obj_clip)
-                        loss_value = tf.losses.MSE(values, m.f_returns[ids])
-                    
-                    grads_actor
-                    
+                    mb_actor_loss_l.append(loss_actor)
+                    mb_critic_loss_l.append(loss_value)
 
-
-@tf.function
-def train_step_ppo(a, obs, adv, probs, returns):
+            update_mean_actor_loss.append(np.mean(mb_actor_loss_l))
+            update_mean_critic_loss.append(np.mean(mb_critic_loss_l))
+        
+        return update_mean_actor_loss, update_mean_critic_loss
     
-    #with tf.device('/physical_device/CPU:0'):
-    with tf.GradientTape(persistent=True) as tape:
-            
-        _, new_probs = a.get_action(obs)
-        new_value = a.get_value(obs)
 
-        #new_probs = get_prob_from_action(new_probs, mb_action)
-
-        ratio = np.divide(new_probs, probs)
-        
-        #clip = tf.clip_by_value(ratio, 1-self.epsilon, 1+self.epsilon) * m.f_advantages[ids]
-        clip = np.clip(ratio, 1-a.epsilon, 1+a.epsilon) * adv
-        loss_clip = tf.minimum(ratio * adv, clip)
-        loss_clip = -tf.reduce_mean(loss_clip)
-        #loss_clip = tf.reduce_mean(loss_clip)
-        
-        loss_value = tf.reduce_mean(tf.square(returns - new_value))
-        #loss_value = tf.keras.losses.mse(m.f_returns[ids], new_value)
-
-        #loss = - loss_clip - loss_value
-
-    grads_actor = tape.gradient(loss_clip, a.actor.trainable_variables)
-    grads_critic = tape.gradient(loss_value, a.critic.trainable_variables)
-    a.optimizer_actor.apply_gradients(zip(grads_actor, a.actor.trainable_variables))
-    a.optimizer_critic.apply_gradients(zip(grads_critic, a.critic.trainable_variables))
-        
-    return loss_clip, loss_value
-
-def play_n_timesteps(a, envs: gym.vector.VectorEnv, mem: memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
-
-    a._build_network(a.input_shape, a.n_outputs)
-
-    batch = envs.num_envs * single_batch_ts
-    updates = t_timesteps // single_batch_ts
-    m = mem
-
-    observation, info = envs.reset()
-    
-    for update in tqdm(range(updates)):
-        print(update)
-        for t in range(single_batch_ts):
-            #print(t)
-            m.obss[t] = observation
-
-            actions, probs = a.get_action(observation)
-            observation, reward, terminated, truncated, info = envs.step(actions.numpy().squeeze().tolist())
-
-            m.rewards[t] = reward
-            m.terminateds[t] = terminated
-            m.truncateds[t] = truncated
-
-        m.obss[t] = observation
-
-        next_val = a.get_value(observation[np.newaxis]).numpy().squeeze()
-
-        # calc advantages
-        m.advantages = np.array([utils.calc_adv_list(single_batch_ts-1, 0, m.rewards[:, env_id], m.values[:, env_id], a._gamma,
-                                            a._lmbda, m.terminateds[:, env_id], m.truncateds[:, env_id], next_val[env_id]) for env_id in range(m.num_envs)], dtype=np.float32)
-        # calc returns
-        m.returns = np.array([utils.calc_returns(single_batch_ts-1, 0, m.rewards[:, env_id], a._gamma,
-                                        m.terminateds[:, env_id], m.truncateds[:, env_id]) for env_id in range(m.num_envs)], dtype=np.float32)
-
-        m.flatten()
-
-        for epoch in range(epochs):
-
-            start_ind = epoch * minibatch_size
-            end_ind = start_ind + minibatch_size
-
-            ids = np.arange(start_ind, end_ind, 1)
-
-            for mb in range(minibatch_size):
-
-                mb_obs = np.array(m.f_obss[ids])
-                mb_adv = np.array(m.f_advantages[ids])
-                mb_probs = np.array(m.f_probs[ids])
-                mb_returns = np.array(m.f_returns[ids])
-                
-                loss_actor, loss_value = a.train_step_ppo(mb_obs, mb_adv, mb_probs, mb_returns)
-
-             
-def main(T, actor, critic, env):
-
-    obs, info = env.reset()
-    v_reward = []
-    v_values = []
-    v_terminated = []
-    v_truncated = []
-
-    gamma = 1
-    lmbda = 1
-
-    for t in T:
-        v_values.append(critic.predict(obs))
-        action = actor.predict(obs)
-        next_obs, reward, terminated, truncated, info = env.step(action)
-        v_reward.append(reward)
-        v_terminated.append(terminated)
-        v_truncated.append(truncated)
-
-    v_values.append(critic.predict(obs))
-
-    v_values, v_terminated, v_truncated = prep_adv_calc(
-        v_values, critic.predict(obs), v_terminated, v_truncated)
-    advantages = calc_adv(T, t, v_reward, v_values, gamma,
-                          lmbda, v_terminated, v_truncated)
-'''
+#    def evaluate(self, envs :gym.vector.VectorEnv,)
