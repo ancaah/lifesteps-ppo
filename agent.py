@@ -4,7 +4,6 @@ import tensorflow as tf
 from tensorflow import keras
 import numpy as np
 import tensorflow_probability as tfp
-from tensorflow_probability import distributions as tfd
 import gymnasium as gym
 from tqdm.notebook import tqdm
 import memory
@@ -105,7 +104,7 @@ class DQN_Agent(Agent):
 
 
 class PPO_Agent(Agent):
-    def __init__(self, input_shape, n_outputs, gamma, lmbda, epsilon, lr, verbose=0):
+    def __init__(self, input_shape, n_outputs, gamma, lmbda, epsilon, c2, lr, verbose=0):
 
         self._verbose = verbose
 
@@ -113,6 +112,7 @@ class PPO_Agent(Agent):
         self._gamma = gamma
         self._lmbda = lmbda
         self.epsilon = epsilon
+        self.c2 = c2
 
 #        self._optimizer_actor = keras.optimizers.AdamW(learning_rate=lr)
 #        self._optimizer_critic = keras.optimizers.AdamW(learning_rate=lr)
@@ -139,13 +139,13 @@ class PPO_Agent(Agent):
     def get_action(self, x, action=None):
         '''Returns the selected action and the probability of that action'''
         logits = self.actor(x)
-        probs = tfd.Categorical(probs=logits)
+        probs = tfp.distributions.Categorical(probs=logits)
         if action is None:
             action = probs.sample(1)
             prob = probs.prob(action)
         else:
             prob = probs.prob(action)
-        return action, prob
+        return action, prob, probs.entropy()
 
     def get_logit(self, logits, actions):
         ll = []
@@ -155,10 +155,10 @@ class PPO_Agent(Agent):
 
     def get_action_and_value(self, x, action=None):
         logits = self.actor(x)
-        probs = tfd.Categorical(probs=logits)
+        probs = tfp.distributions.Categorical(probs=logits)
         if action is None:
             action = probs.sample(1)
-        return action, probs.prob(action), self.critic(x)
+        return action, probs.prob(action), probs.entropy(), self.critic(x)
 
     def play_one_step(self, env, state, epsilon):
 
@@ -175,9 +175,11 @@ class PPO_Agent(Agent):
     # actor
     def _build_policy(self, input_shape, n_outputs):
         self.actor = keras.Sequential([
-            keras.layers.Dense(8, name='actor_dense_1', activation="relu", input_shape=input_shape,
+            keras.layers.Dense(64, name='actor_dense_1', activation="relu", input_shape=input_shape,
                                kernel_initializer='random_uniform', bias_initializer=keras.initializers.Constant(0.1)),
-            keras.layers.Dense(units=n_outputs, name='actor_dense_2', activation="relu", kernel_initializer='random_uniform',
+            keras.layers.Dense(32, name='actor_dense_2', activation="relu", kernel_initializer='random_uniform',
+                               bias_initializer=keras.initializers.Constant(0.1)),
+            keras.layers.Dense(units=n_outputs, name='actor_dense_output', activation="relu", kernel_initializer='random_uniform',
                                bias_initializer=keras.initializers.Constant(0.1)),
             keras.layers.Softmax(name='actor_dense_softmax')
         ])
@@ -185,10 +187,13 @@ class PPO_Agent(Agent):
     # critic
     def _build_vfunction(self, input_shape):
         self.critic = keras.Sequential([
-            keras.layers.Dense(4, name='critic_dense_1', activation="relu", input_shape=input_shape,
+            keras.layers.Dense(64, name='critic_dense_1', activation="relu", input_shape=input_shape,
                                kernel_initializer='random_uniform',
                                bias_initializer=keras.initializers.Constant(0.1)),
-            keras.layers.Dense(1, name='critic_dense_2')
+            keras.layers.Dense(32, name='critic_dense_2', activation="relu", input_shape=input_shape,
+                               kernel_initializer='random_uniform',
+                               bias_initializer=keras.initializers.Constant(0.1)),
+            keras.layers.Dense(1, name='critic_dense_output')
         ])
 
     @tf.function
@@ -197,7 +202,7 @@ class PPO_Agent(Agent):
         #with tf.device('/physical_device/CPU:0'):
         with tf.GradientTape(persistent=True) as tape:
                 
-            _, new_probs = self.get_action(obs, actions)
+            _, new_probs, entropy = self.get_action(obs, actions)
             new_value = self.get_value(obs)
             #self.get_action_and_value
             #new_probs = get_prob_from_action(new_probs, mb_action)
@@ -207,20 +212,21 @@ class PPO_Agent(Agent):
             clip = tf.clip_by_value(ratio, 1-self.epsilon, 1+self.epsilon) * adv
             #clip = np.clip(ratio, 1-self.epsilon, 1+self.epsilon) * adv
             loss_clip = tf.minimum(ratio * adv, clip)
-            loss_clip = -tf.reduce_mean(loss_clip)
-            #loss_clip = tf.reduce_mean(loss_clip)
+            #loss_clip = -tf.reduce_mean(loss_clip)
+            loss_clip = tf.reduce_mean(loss_clip)
             
+            loss_actor = -loss_clip - self.c2*entropy
             loss_value = tf.reduce_mean(tf.square(returns - new_value))
             #loss_value = tf.keras.losses.mse(m.f_returns[ids], new_value)
 
             #loss = - loss_clip - loss_value
 
-        grads_actor = tape.gradient(loss_clip, self.actor.trainable_variables)
+        grads_actor = tape.gradient(loss_actor, self.actor.trainable_variables)
         grads_critic = tape.gradient(loss_value, self.critic.trainable_variables)
         self.optimizer_actor.apply_gradients(zip(grads_actor, self.actor.trainable_variables))
         self.optimizer_critic.apply_gradients(zip(grads_critic, self.critic.trainable_variables))
             
-        return loss_clip, loss_value
+        return loss_actor, loss_value
 
     def play_n_timesteps(self, envs: gym.vector.VectorEnv, mem: memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
 
@@ -239,7 +245,8 @@ class PPO_Agent(Agent):
             
                 m.obss[t] = observation
 
-                actions, probs = self.get_action(observation)
+                actions, probs, _ = self.get_action(observation)
+                m.values[t] = self.get_value(observation).numpy().squeeze()
 
                 # the Gymnasium Vectorized Environment step method takes a 1-dimensional list of actions as parameter  
                 observation, reward, terminated, truncated, info = envs.step(actions.numpy().squeeze().tolist())
@@ -249,6 +256,7 @@ class PPO_Agent(Agent):
                 m.rewards[t] = reward
                 m.terminateds[t] = terminated
                 m.truncateds[t] = truncated
+                m.values[t] 
 
             m.obss[t] = observation
 
