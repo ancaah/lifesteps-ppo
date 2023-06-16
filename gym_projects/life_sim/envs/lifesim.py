@@ -9,9 +9,11 @@ class LifeSim(Env):
 
     metadata = {"render_modes": ["text"]}
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, max_timesteps = 300):
         # define your environment
         # action space, observation space
+
+        self._max_timesteps = max_timesteps
 
         #self.terminated = False
         #self.truncated = False
@@ -35,7 +37,7 @@ class LifeSim(Env):
         # reward collected
         self.collected_reward = 0
         # reward lambda
-        self.l_1 = 1
+        self.l_1 = 0.5
         self.l_2 = 0.5
 
 
@@ -105,7 +107,7 @@ class LifeSim(Env):
         terminated = (self.state[self.obs_dict["money"]] == 0 or self.state[self.obs_dict["health"]] == 0)
         
         reward = self.collected_reward if truncated else 0
-        reward = -100+self.collected_reward if terminated else 0
+        reward = -10+self.collected_reward if terminated else 0
 
         self._set_info(new_state, action, reward)
 
@@ -132,7 +134,7 @@ class LifeSim(Env):
             return f"State -> {i['last_state']}  |  Reward: {i['last_reward']}  |  Last Action: {self._action_names[i['last_action']]}  |"
         #return f"State -> {i['last_state']}  |  Reward: {i['last_reward']}  |  Last Action:  |"
 
-    def reset(self, seed=None, options=None, max_timesteps = 300):
+    def reset(self, seed=None, options=None):
 #    def reset(self, seed=None, options=None):
         # reset your environment
         super().reset(seed=seed)
@@ -146,7 +148,7 @@ class LifeSim(Env):
                                space[np.random.randint(0, len(space))] / 1.5], dtype=np.float32)
         self.collected_reward = 0
         self._current_timestep = 0
-        self._max_timesteps = max_timesteps
+        #self._max_timesteps = max_timesteps
 
         observation = self._get_obs()
         

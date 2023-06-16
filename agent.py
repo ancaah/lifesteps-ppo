@@ -8,6 +8,7 @@ import gymnasium as gym
 from tqdm.notebook import tqdm
 import memory
 import utils
+import os
 
 
 class Agent(ABC):
@@ -175,9 +176,9 @@ class PPO_Agent(Agent):
     # actor
     def _build_policy(self, input_shape, n_outputs):
         self.actor = keras.Sequential([
-            keras.layers.Dense(64, name='actor_dense_1', activation="relu", input_shape=input_shape,
+            keras.layers.Dense(128, name='actor_dense_1', activation="relu", input_shape=input_shape,
                                kernel_initializer='random_uniform', bias_initializer=keras.initializers.Constant(0.1)),
-            keras.layers.Dense(32, name='actor_dense_2', activation="relu", kernel_initializer='random_uniform',
+            keras.layers.Dense(128, name='actor_dense_2', activation="relu", kernel_initializer='random_uniform',
                                bias_initializer=keras.initializers.Constant(0.1)),
             keras.layers.Dense(units=n_outputs, name='actor_dense_output', activation="relu", kernel_initializer='random_uniform',
                                bias_initializer=keras.initializers.Constant(0.1)),
@@ -187,10 +188,10 @@ class PPO_Agent(Agent):
     # critic
     def _build_vfunction(self, input_shape):
         self.critic = keras.Sequential([
-            keras.layers.Dense(64, name='critic_dense_1', activation="relu", input_shape=input_shape,
+            keras.layers.Dense(128, name='critic_dense_1', activation="relu", input_shape=input_shape,
                                kernel_initializer='random_uniform',
                                bias_initializer=keras.initializers.Constant(0.1)),
-            keras.layers.Dense(32, name='critic_dense_2', activation="relu", input_shape=input_shape,
+            keras.layers.Dense(128, name='critic_dense_2', activation="relu", input_shape=input_shape,
                                kernel_initializer='random_uniform',
                                bias_initializer=keras.initializers.Constant(0.1)),
             keras.layers.Dense(1, name='critic_dense_output')
@@ -229,6 +230,20 @@ class PPO_Agent(Agent):
         return loss_actor, loss_value
 
     def play_n_timesteps(self, envs: gym.vector.VectorEnv, mem: memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
+
+        checkpoint_path_actor = "training_1_actor/model.ckpt"
+        checkpoint_path_critic = "training_1_critic/model.ckpt"
+        checkpoint_dir_actor = os.path.dirname(checkpoint_path_actor)
+        checkpoint_dir_critic = os.path.dirname(checkpoint_path_critic)
+
+        # Save the weights
+        #model.save_weights('./checkpoints/my_checkpoint')
+
+        # Create a new model instance
+        #model = create_model()
+
+        # Restore the weights
+        #model.load_weights('./checkpoints/my_checkpoint')
 
         update_mean_actor_loss = []
         update_mean_critic_loss = []
@@ -298,6 +313,9 @@ class PPO_Agent(Agent):
             update_mean_actor_loss.append(np.mean(mb_actor_loss_l))
             update_mean_critic_loss.append(np.mean(mb_critic_loss_l))
         
+            self.actor.save_weights(checkpoint_dir_actor)
+            self.critic.save_weights(checkpoint_dir_critic)
+
         return update_mean_actor_loss, update_mean_critic_loss
     
 
