@@ -106,7 +106,7 @@ class DQN_Agent(Agent):
 
 
 class PPO_Agent(Agent):
-    def __init__(self, input_shape, n_outputs, gamma, lmbda, epsilon, c2, lr_actor, lr_critic, log_dir, verbose=0):
+    def __init__(self, input_shape, n_outputs, gamma, lmbda, epsilon, c2, lr_actor, lr_critic, log = False, log_dir = None, verbose=0):
 
         self._verbose = verbose
 
@@ -115,6 +115,12 @@ class PPO_Agent(Agent):
         self._lmbda = lmbda
         self.epsilon = epsilon
         self.c2 = c2
+
+        self.actions_array = {
+            0: np.transpose([1, 0, 0]),
+            1: np.transpose([0, 1, 0]),
+            2: np.transpose([0, 0, 1]),
+        }
 
 #        self._optimizer_actor = keras.optimizers.AdamW(learning_rate=lr)
 #        self._optimizer_critic = keras.optimizers.AdamW(learning_rate=lr)
@@ -131,8 +137,12 @@ class PPO_Agent(Agent):
         self._build_network(input_shape, n_outputs)
     
         #self.log_dir = log_dir
-        self.file_writer = tf.summary.create_file_writer(log_dir + "/metrics")
-        self.file_writer.set_as_default()
+        if log == True:
+            self.log_dir = log_dir
+            self.log = log
+            self.train_writer = tf.summary.create_file_writer(log_dir + "/metrics/train")
+            self.eval_writer = tf.summary.create_file_writer(log_dir + "/metrics/eval")
+            #self.file_writer.set_as_default()
 
         #self._act_array = tf.constant([0, 1, 2])
 
@@ -238,6 +248,11 @@ class PPO_Agent(Agent):
             
         return loss_actor, loss_value
 
+    def save_models(self, addstr = ""):
+        v = "" if addstr == "" else "-"
+        self.actor.save(filepath="models/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/actor" +f"{v}{addstr}" + "/")
+        self.critic.save(filepath="models/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/critic" +f"{v}{addstr}" + "/")
+
     def play_n_timesteps(self, envs: gym.vector.VectorEnv, mem: memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
 
         '''
@@ -256,9 +271,16 @@ class PPO_Agent(Agent):
         # Restore the weights
         #model.load_weights('./checkpoints/my_checkpoint')
 
-        #update_mean_actor_loss = []
-        #update_mean_critic_loss = []
+        #if not self.log:
+        update_mean_actor_loss = []
+        update_mean_critic_loss = []
 
+        mean_actor_loss = 0
+        n_a = 0
+        mean_critic_loss = 0
+        n_c = 0
+        last_mcr = 0
+        
         batch = envs.num_envs * single_batch_ts
         updates = t_timesteps // single_batch_ts
         m = mem
@@ -268,6 +290,10 @@ class PPO_Agent(Agent):
         alpha = 1
         
         for update in tqdm(range(updates)):
+
+            mean_cumulative_rewards = 0
+
+            n_r = 0
 
             #alpha = 1 - (update/(updates*0.85)) if alpha > 0 else 0
             alpha = 1 - (update/updates)
@@ -283,10 +309,15 @@ class PPO_Agent(Agent):
             #print(f"e: {self.epsilon}")
             self.epsilon = self.epsilon * alpha
 
+            #next_truncated = np.zeros(shape=(m.truncateds[0]))
+            #next_terminated = np.zeros(shape=(m.terminateds[0]))
+            
             for t in range(single_batch_ts):
             
                 m.obss[t] = observation
-
+                #m.terminateds[t] = next_terminated
+                #m.truncateds[t] = next_truncated
+                #print(observation)
                 actions, probs, _ = self.get_action(observation)
                 m.values[t] = self.get_value(observation).numpy().squeeze()
 
@@ -298,9 +329,18 @@ class PPO_Agent(Agent):
                 m.rewards[t] = reward
                 m.terminateds[t] = terminated
                 m.truncateds[t] = truncated
-                m.values[t] 
+                
+                mean_cumulative_rewards = utils.incremental_mean(mean_cumulative_rewards, np.mean(m.rewards[t]), n_r)
+                n_r += 1
 
-            m.obss[t] = observation
+            #m.obss[t] = observation
+
+            if update % 30 == 0:
+                print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
+                print(f"Mean cumulative rewards (per step): {mean_cumulative_rewards}")
+                print(f"Cumulative reward increment (wrt last mean): {mean_cumulative_rewards-last_mcr}")
+                print()
+                last_mcr = mean_cumulative_rewards
 
             #next_val = self.get_value(observation[np.newaxis]).numpy().squeeze()
             next_val = self.get_value(observation).numpy().squeeze()
@@ -317,14 +357,20 @@ class PPO_Agent(Agent):
             mb_actor_loss_l = []
             mb_critic_loss_l = []
 
+            bch_ids = np.arange(0, single_batch_ts, 1)
+
             for epoch in range(epochs):
 
-                start_ind = epoch * minibatch_size
-                end_ind = start_ind + minibatch_size
+                np.random.shuffle(bch_ids)
 
-                ids = np.arange(start_ind, end_ind, 1)
+                for mb_start in np.arange(0, single_batch_ts, minibatch_size):
 
-                for mb in range(minibatch_size):
+                    start_ind = mb_start
+                    end_ind = start_ind + minibatch_size
+
+                    ids = np.arange(start_ind, end_ind, 1)
+
+#                for mb in range(minibatch_size):
 
                     mb_obs = np.array(m.f_obss[ids])
                     mb_actions = np.array(m.f_actions[ids])
@@ -332,28 +378,94 @@ class PPO_Agent(Agent):
                     mb_probs = np.array(m.f_probs[ids])
                     mb_returns = np.array(m.f_returns[ids])
                     
-                    loss_actor, loss_value = self.train_step_ppo(mb_obs, mb_actions, mb_adv, mb_probs, mb_returns)
+                    loss_actor, loss_critic = self.train_step_ppo(mb_obs, mb_actions, mb_adv, mb_probs, mb_returns)
 
+                    mean_actor_loss = utils.incremental_mean(mean_actor_loss, np.mean(loss_actor), n_a)
+                    mean_critic_loss = utils.incremental_mean(mean_critic_loss, np.mean(loss_critic), n_c)
+                    n_a += 1
+                    n_c += 1
                     mb_actor_loss_l.append(loss_actor)
-                    mb_critic_loss_l.append(loss_value)
+                    mb_critic_loss_l.append(loss_critic)
 
-            #update_mean_actor_loss.append(np.mean(mb_actor_loss_l))
-            #update_mean_critic_loss.append(np.mean(mb_critic_loss_l))
+            if self.log:
+                with self.train_writer.as_default():
+                    tf.summary.scalar('loss_actor', data=np.mean(mb_actor_loss_l), step=update)
+                    tf.summary.scalar('loss_critic', data=np.mean(mb_critic_loss_l), step=update)
+            else:
+                update_mean_actor_loss.append(np.mean(mb_actor_loss_l))
+                update_mean_critic_loss.append(np.mean(mb_critic_loss_l))
         
+        print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
+        print("Training results")
+        print()
+        print(f"Mean Actor Loss: {mean_actor_loss}")
+        print(f"Mean Critic Loss: {mean_critic_loss}")
+        print(f"Mean cumulative rewards (per step): {mean_cumulative_rewards}")
+        print(f"Cumulative reward increment (wrt last mean): {mean_cumulative_rewards-last_mcr}")
+        print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
+        
+        if not self.log:
+            return update_mean_actor_loss, update_mean_critic_loss
 
-#            with self.tf_writer.as_default():
-            tf.summary.scalar('loss_actor', data=np.mean(mb_actor_loss_l), step=update)
-            tf.summary.scalar('loss_critic', data=np.mean(mb_critic_loss_l), step=update)
+    def evaluate(self, env :gym.Env, episodes, seeds):
 
+        # max number of steps for each episode of the simulator.
+        # if reached, the environment is TRUNCATED by the TimeLimit wrapper
+        #max_steps = 300
 
-            #self.actor.save_weights(checkpoint_dir_actor)
-            #self.critic.save_weights(checkpoint_dir_critic)
+        #if not self.log:
+        cumulative_rewards = []
+        sum_actions = []
 
-        return [], []
-    
-    def save_models(self, addstr = ""):
-        v = "" if addstr == "" else "-"
-        self.actor.save(filepath="models/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/actor" +f"{v}{addstr}" + "/")
-        self.critic.save(filepath="models/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/critic" +f"{v}{addstr}" + "/")
+        mean_cumulative_rewards = 0
+        n_r = 0
 
-#    def evaluate(self, envs :gym.vector.VectorEnv,)
+        avg_sum_reward = 0
+        avg_sum_actions = np.transpose([0, 0, 0])
+
+        n_episodes = 200
+        t = 0
+
+        for episode in tqdm(np.arange(1, n_episodes+1, 1), desc="Episodes", position=0):
+
+            #print(f"Episode {episode}")
+            sum_rewards = 0
+            actions = np.transpose([0, 0, 0])
+
+            obs, info = env.reset(seed=seeds[t])
+            t += 1
+
+            #for step in np.arange(1, max_steps, 1):
+            while True:    
+
+                action, _ , _= self.get_action(obs[np.newaxis])
+
+                action = action.numpy().squeeze().tolist()
+                new_obs, reward, terminated, truncated, info = env.step(action)
+
+                actions = actions + self.actions_array[action]
+
+                sum_rewards += reward
+        #        actions = actions + actions_array[v_info['last_action']]
+
+                #env.render()
+                if terminated or truncated:
+                    break
+
+            mean_cumulative_rewards = utils.incremental_mean(mean_cumulative_rewards, sum_rewards, n_r)
+            n_r += 1
+
+            if self.log:
+                with self.eval_writer.as_default():
+                    tf.summary.scalar('cumulative_rewards', data=sum_rewards, step=episode)
+                    tf.summary.scalar('chosen_work', data=actions[0], step=episode)
+                    tf.summary.scalar('chosen_sport', data=actions[1], step=episode)
+                    tf.summary.scalar('chosen_sociality', data=actions[2], step=episode)
+            else:
+                sum_actions.append(actions)
+                cumulative_rewards.append(sum_rewards)
+            
+        print(f"Mean Cumulative Rewards: {mean_cumulative_rewards}")
+        
+        if not self.log:
+            return cumulative_rewards, sum_actions
