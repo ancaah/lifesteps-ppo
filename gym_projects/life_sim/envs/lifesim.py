@@ -37,7 +37,7 @@ class LifeSim(Env):
         # reward collected
         self.collected_reward = 0
         # reward lambda
-        self.l_1 = 0.5
+        self.l_1 = 2
         self.l_2 = 0.5
 
 
@@ -100,7 +100,8 @@ class LifeSim(Env):
         observation = self._get_obs()
         info = self._get_info()
 
-        self.collected_reward += self.accumulate_reward()
+        #self.collected_reward += self.accumulate_reward()
+        self.collected_reward = self.accumulate_reward()
 
         truncated = True if self._current_timestep == self._max_timesteps else False
         

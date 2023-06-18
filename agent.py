@@ -8,6 +8,7 @@ import gymnasium as gym
 from tqdm.notebook import tqdm
 import memory
 import utils
+import datetime
 import os
 
 
@@ -105,7 +106,7 @@ class DQN_Agent(Agent):
 
 
 class PPO_Agent(Agent):
-    def __init__(self, input_shape, n_outputs, gamma, lmbda, epsilon, c2, lr, verbose=0):
+    def __init__(self, input_shape, n_outputs, gamma, lmbda, epsilon, c2, lr_actor, lr_critic, log_dir, verbose=0):
 
         self._verbose = verbose
 
@@ -122,13 +123,17 @@ class PPO_Agent(Agent):
 
         # self._discount = discount_factor
 
-        self.lr = lr
+        self.lr_actor = lr_actor
+        self.lr_critic = lr_critic
         self.input_shape = input_shape
         self.n_outputs = n_outputs
 
         self._build_network(input_shape, n_outputs)
-        
-        
+    
+        #self.log_dir = log_dir
+        self.file_writer = tf.summary.create_file_writer(log_dir + "/metrics")
+        self.file_writer.set_as_default()
+
         #self._act_array = tf.constant([0, 1, 2])
 
         self.optimizer_actor.build(self.actor.trainable_variables)
@@ -168,32 +173,36 @@ class PPO_Agent(Agent):
         return next_state, reward, terminated, truncated, info, action
 
     def _build_network(self, input_shape, n_outputs):
-        self.optimizer_actor = keras.optimizers.AdamW(learning_rate=self.lr)
-        self.optimizer_critic = keras.optimizers.AdamW(learning_rate=self.lr)
+        #self.optimizer_actor = keras.optimizers.AdamW(learning_rate=self.lr_actor)
+        #self.optimizer_critic = keras.optimizers.AdamW(learning_rate=self.lr_critic)
+        self.optimizer_actor = keras.optimizers.AdamW(learning_rate=self.lr_actor)
+        self.optimizer_critic = keras.optimizers.AdamW(learning_rate=self.lr_critic)
         self._build_policy(input_shape, n_outputs)
         self._build_vfunction(input_shape)
 
     # actor
     def _build_policy(self, input_shape, n_outputs):
+        bias_init = tf.keras.initializers.RandomUniform(minval=-0.05, maxval=0.05, seed=42)
         self.actor = keras.Sequential([
             keras.layers.Dense(128, name='actor_dense_1', activation="relu", input_shape=input_shape,
-                               kernel_initializer='random_uniform', bias_initializer=keras.initializers.Constant(0.1)),
+                               kernel_initializer='random_uniform', bias_initializer=bias_init),
             keras.layers.Dense(128, name='actor_dense_2', activation="relu", kernel_initializer='random_uniform',
-                               bias_initializer=keras.initializers.Constant(0.1)),
+                               bias_initializer=bias_init),
             keras.layers.Dense(units=n_outputs, name='actor_dense_output', activation="relu", kernel_initializer='random_uniform',
-                               bias_initializer=keras.initializers.Constant(0.1)),
+                               bias_initializer=bias_init),
             keras.layers.Softmax(name='actor_dense_softmax')
         ])
 
     # critic
     def _build_vfunction(self, input_shape):
+        bias_init = tf.keras.initializers.RandomUniform(minval=-0.05, maxval=0.05, seed=19)
         self.critic = keras.Sequential([
             keras.layers.Dense(128, name='critic_dense_1', activation="relu", input_shape=input_shape,
                                kernel_initializer='random_uniform',
-                               bias_initializer=keras.initializers.Constant(0.1)),
+                               bias_initializer=bias_init),
             keras.layers.Dense(128, name='critic_dense_2', activation="relu", input_shape=input_shape,
                                kernel_initializer='random_uniform',
-                               bias_initializer=keras.initializers.Constant(0.1)),
+                               bias_initializer=bias_init),
             keras.layers.Dense(1, name='critic_dense_output')
         ])
 
@@ -231,10 +240,12 @@ class PPO_Agent(Agent):
 
     def play_n_timesteps(self, envs: gym.vector.VectorEnv, mem: memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
 
+        '''
         checkpoint_path_actor = "training_1_actor/model.ckpt"
         checkpoint_path_critic = "training_1_critic/model.ckpt"
         checkpoint_dir_actor = os.path.dirname(checkpoint_path_actor)
         checkpoint_dir_critic = os.path.dirname(checkpoint_path_critic)
+        '''
 
         # Save the weights
         #model.save_weights('./checkpoints/my_checkpoint')
@@ -245,17 +256,33 @@ class PPO_Agent(Agent):
         # Restore the weights
         #model.load_weights('./checkpoints/my_checkpoint')
 
-        update_mean_actor_loss = []
-        update_mean_critic_loss = []
+        #update_mean_actor_loss = []
+        #update_mean_critic_loss = []
 
         batch = envs.num_envs * single_batch_ts
         updates = t_timesteps // single_batch_ts
         m = mem
-
+        #tau_loss = 
         observation, info = envs.reset()
         
+        alpha = 1
+        
         for update in tqdm(range(updates)):
-            
+
+            #alpha = 1 - (update/(updates*0.85)) if alpha > 0 else 0
+            alpha = 1 - (update/updates)
+            lr_actor = self.lr_actor * alpha
+            lr_critic = self.lr_critic * alpha
+            # create new adam (weight decay = 0, lr updated)
+            ###self.optimizer_actor = keras.optimizers.Adam(learning_rate=self.lr_critic)
+            self.optimizer_actor.learning_rate = lr_actor
+            ###self.optimizer_critic = keras.optimizers.Adam(learning_rate=self.lr_critic)
+            self.optimizer_critic.learning_rate = lr_critic
+
+            #print(f"a: {alpha}")
+            #print(f"e: {self.epsilon}")
+            self.epsilon = self.epsilon * alpha
+
             for t in range(single_batch_ts):
             
                 m.obss[t] = observation
@@ -280,7 +307,7 @@ class PPO_Agent(Agent):
 
             # calc advantages
             m.advantages = np.array([utils.calc_adv_list(single_batch_ts-1, 0, m.rewards[:, env_id], m.values[:, env_id], self._gamma,
-                                                self._lmbda, m.terminateds[:, env_id], m.truncateds[:, env_id], next_val[env_id]) for env_id in range(m.num_envs)], dtype=np.float32)
+                                                self._lmbda, m.terminateds[:, env_id], m.truncateds[:, env_id]) for env_id in range(m.num_envs)], dtype=np.float32)
             # calc returns
             m.returns = np.array([utils.calc_returns(single_batch_ts-1, 0, m.rewards[:, env_id], self._gamma,
                                             m.terminateds[:, env_id], m.truncateds[:, env_id]) for env_id in range(m.num_envs)], dtype=np.float32)
@@ -310,13 +337,23 @@ class PPO_Agent(Agent):
                     mb_actor_loss_l.append(loss_actor)
                     mb_critic_loss_l.append(loss_value)
 
-            update_mean_actor_loss.append(np.mean(mb_actor_loss_l))
-            update_mean_critic_loss.append(np.mean(mb_critic_loss_l))
+            #update_mean_actor_loss.append(np.mean(mb_actor_loss_l))
+            #update_mean_critic_loss.append(np.mean(mb_critic_loss_l))
         
-            self.actor.save_weights(checkpoint_dir_actor)
-            self.critic.save_weights(checkpoint_dir_critic)
 
-        return update_mean_actor_loss, update_mean_critic_loss
+#            with self.tf_writer.as_default():
+            tf.summary.scalar('loss_actor', data=np.mean(mb_actor_loss_l), step=update)
+            tf.summary.scalar('loss_critic', data=np.mean(mb_critic_loss_l), step=update)
+
+
+            #self.actor.save_weights(checkpoint_dir_actor)
+            #self.critic.save_weights(checkpoint_dir_critic)
+
+        return [], []
     
+    def save_models(self, addstr = ""):
+        v = "" if addstr == "" else "-"
+        self.actor.save(filepath="models/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/actor" +f"{v}{addstr}" + "/")
+        self.critic.save(filepath="models/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/critic" +f"{v}{addstr}" + "/")
 
 #    def evaluate(self, envs :gym.vector.VectorEnv,)

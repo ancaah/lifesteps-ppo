@@ -1,2 +1,5 @@
 gym_projects/life_sim.egg-info
 *.zip
+logs
+models
+__pycache__
