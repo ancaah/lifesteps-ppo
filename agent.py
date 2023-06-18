@@ -106,7 +106,7 @@ class DQN_Agent(Agent):
 
 
 class PPO_Agent(Agent):
-    def __init__(self, input_shape, n_outputs, gamma, lmbda, epsilon, c2, lr_actor, lr_critic, log = False, log_dir = None, verbose=0):
+    def __init__(self, input_shape, n_outputs, gamma, lmbda, epsilon, c2, lr_actor, lr_critic, log = False, log_dir = None, env_max_timesteps=300, verbose=0):
 
         self._verbose = verbose
 
@@ -149,6 +149,8 @@ class PPO_Agent(Agent):
         self.optimizer_actor.build(self.actor.trainable_variables)
         self.optimizer_critic.build(self.critic.trainable_variables)
 
+        self.env_max_timesteps = env_max_timesteps
+
     def get_value(self, x):
         return self.critic(x)
 
@@ -185,34 +187,32 @@ class PPO_Agent(Agent):
     def _build_network(self, input_shape, n_outputs):
         #self.optimizer_actor = keras.optimizers.AdamW(learning_rate=self.lr_actor)
         #self.optimizer_critic = keras.optimizers.AdamW(learning_rate=self.lr_critic)
-        self.optimizer_actor = keras.optimizers.AdamW(learning_rate=self.lr_actor)
-        self.optimizer_critic = keras.optimizers.AdamW(learning_rate=self.lr_critic)
+        self.optimizer_actor = keras.optimizers.Adam(learning_rate=self.lr_actor)
+        self.optimizer_critic = keras.optimizers.Adam(learning_rate=self.lr_critic)
         self._build_policy(input_shape, n_outputs)
         self._build_vfunction(input_shape)
 
     # actor
     def _build_policy(self, input_shape, n_outputs):
-        bias_init = tf.keras.initializers.RandomUniform(minval=-0.05, maxval=0.05, seed=42)
+        #bias_init = tf.keras.initializers.RandomUniform(minval=-0.05, maxval=0.05, seed=42)
+        k_initializer = tf.keras.initializers.Orthogonal()
         self.actor = keras.Sequential([
             keras.layers.Dense(128, name='actor_dense_1', activation="relu", input_shape=input_shape,
-                               kernel_initializer='random_uniform', bias_initializer=bias_init),
-            keras.layers.Dense(128, name='actor_dense_2', activation="relu", kernel_initializer='random_uniform',
-                               bias_initializer=bias_init),
-            keras.layers.Dense(units=n_outputs, name='actor_dense_output', activation="relu", kernel_initializer='random_uniform',
-                               bias_initializer=bias_init),
+                               kernel_initializer=k_initializer),
+            keras.layers.Dense(128, name='actor_dense_2', activation="relu", kernel_initializer=k_initializer),
+            keras.layers.Dense(units=n_outputs, name='actor_dense_output', activation="relu", kernel_initializer=k_initializer),
             keras.layers.Softmax(name='actor_dense_softmax')
         ])
 
     # critic
     def _build_vfunction(self, input_shape):
-        bias_init = tf.keras.initializers.RandomUniform(minval=-0.05, maxval=0.05, seed=19)
+#        bias_init = tf.keras.initializers.RandomUniform(minval=-0.05, maxval=0.05, seed=19)
+        k_initializer = tf.keras.initializers.Orthogonal()
         self.critic = keras.Sequential([
-            keras.layers.Dense(128, name='critic_dense_1', activation="relu", input_shape=input_shape,
-                               kernel_initializer='random_uniform',
-                               bias_initializer=bias_init),
+            keras.layers.Dense(256, name='critic_dense_1', activation="relu", input_shape=input_shape,
+                               kernel_initializer=k_initializer),
             keras.layers.Dense(128, name='critic_dense_2', activation="relu", input_shape=input_shape,
-                               kernel_initializer='random_uniform',
-                               bias_initializer=bias_init),
+                               kernel_initializer=k_initializer),
             keras.layers.Dense(1, name='critic_dense_output')
         ])
 
@@ -262,6 +262,7 @@ class PPO_Agent(Agent):
         checkpoint_dir_critic = os.path.dirname(checkpoint_path_critic)
         '''
 
+
         # Save the weights
         #model.save_weights('./checkpoints/my_checkpoint')
 
@@ -288,6 +289,14 @@ class PPO_Agent(Agent):
         observation, info = envs.reset()
         
         alpha = 1
+
+        eval_frequency = 2
+        evaluation = 0 # evaluation counter
+
+        # seeds for evaluation
+        eval_n_episodes = 25
+        eval_seeds = [int(x) for x in np.random.randint(1, 100000 + 1, size=eval_n_episodes)]
+        eval_env = gym.make('life_sim/LifeSim-v0', render_mode='text', max_timesteps=self.env_max_timesteps)
         
         for update in tqdm(range(updates)):
 
@@ -333,15 +342,7 @@ class PPO_Agent(Agent):
                 mean_cumulative_rewards = utils.incremental_mean(mean_cumulative_rewards, np.mean(m.rewards[t]), n_r)
                 n_r += 1
 
-            #m.obss[t] = observation
-
-            if update % 30 == 0:
-                print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
-                print(f"Mean cumulative rewards (per step): {mean_cumulative_rewards}")
-                print(f"Cumulative reward increment (wrt last mean): {mean_cumulative_rewards-last_mcr}")
-                print()
-                last_mcr = mean_cumulative_rewards
-
+            #print(f"last {last_mcr}")
             #next_val = self.get_value(observation[np.newaxis]).numpy().squeeze()
             next_val = self.get_value(observation).numpy().squeeze()
 
@@ -387,10 +388,29 @@ class PPO_Agent(Agent):
                     mb_actor_loss_l.append(loss_actor)
                     mb_critic_loss_l.append(loss_critic)
 
+            #m.obss[t] = observation
+            #print(mean_cumulative_rewards)
+            if update % eval_frequency == 0:
+                print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
+                evaluation += 1
+                self.evaluate(eval_n_episodes, eval_seeds, evaluation)
+                #print(f"Mean cumulative rewards of the last batch (per step): {mean_cumulative_rewards:.5}")
+                #print(f"Cumulative reward increment (wrt last mean): {mean_cumulative_rewards-last_mcr:.5}")
+                print()
+                last_mcr = mean_cumulative_rewards
+
+            
             if self.log:
                 with self.train_writer.as_default():
-                    tf.summary.scalar('loss_actor', data=np.mean(mb_actor_loss_l), step=update)
-                    tf.summary.scalar('loss_critic', data=np.mean(mb_critic_loss_l), step=update)
+                    loss_act = np.mean(mb_actor_loss_l)
+                    loss_cri = np.mean(mb_critic_loss_l)
+                    tf.summary.scalar('loss_actor', data=loss_act, step=update)
+                    tf.summary.scalar('loss_critic', data=loss_cri, step=update)
+                    
+                    if update % eval_frequency == 0:
+                        print(f"Actor loss: {loss_act:.5}")
+                        print(f"Critic loss: {loss_cri:.5}")
+                        print()
             else:
                 update_mean_actor_loss.append(np.mean(mb_actor_loss_l))
                 update_mean_critic_loss.append(np.mean(mb_critic_loss_l))
@@ -400,33 +420,36 @@ class PPO_Agent(Agent):
         print()
         print(f"Mean Actor Loss: {mean_actor_loss}")
         print(f"Mean Critic Loss: {mean_critic_loss}")
-        print(f"Mean cumulative rewards (per step): {mean_cumulative_rewards}")
-        print(f"Cumulative reward increment (wrt last mean): {mean_cumulative_rewards-last_mcr}")
+        print(f"Mean cumulative rewards of the last batch (per step): {mean_cumulative_rewards}")
+        #print(f"Cumulative reward increment (wrt last mean): {mean_cumulative_rewards-last_mcr}")
         print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
         
         if not self.log:
             return update_mean_actor_loss, update_mean_critic_loss
 
-    def evaluate(self, env :gym.Env, episodes, seeds):
+    def evaluate(self, episodes, seeds, eval_code=None):
 
         # max number of steps for each episode of the simulator.
         # if reached, the environment is TRUNCATED by the TimeLimit wrapper
         #max_steps = 300
 
-        #if not self.log:
-        cumulative_rewards = []
-        sum_actions = []
+        env = gym.make('life_sim/LifeSim-v0', render_mode='text', max_timesteps=self.env_max_timesteps)
+
+        if not self.log:
+            cumulative_rewards = []
+            sum_actions = []
 
         mean_cumulative_rewards = 0
-        n_r = 0
+        mean_actions = np.zeros(shape=(3,))
 
         avg_sum_reward = 0
         avg_sum_actions = np.transpose([0, 0, 0])
 
-        n_episodes = 200
+        n_episodes = episodes
         t = 0
 
-        for episode in tqdm(np.arange(1, n_episodes+1, 1), desc="Episodes", position=0):
+        #for episode in tqdm(np.arange(1, n_episodes+1, 1), desc="Episodes", position=0):
+        for episode in np.arange(0, n_episodes, 1):
 
             #print(f"Episode {episode}")
             sum_rewards = 0
@@ -452,20 +475,33 @@ class PPO_Agent(Agent):
                 if terminated or truncated:
                     break
 
-            mean_cumulative_rewards = utils.incremental_mean(mean_cumulative_rewards, sum_rewards, n_r)
-            n_r += 1
+            # normalize actions selection
+            m_a = np.max(actions)
+            actions = np.divide(actions, m_a)
+            mean_actions = [utils.incremental_mean(mean_actions[id], actions[id], episode) for id in range(3)]
 
-            if self.log:
-                with self.eval_writer.as_default():
-                    tf.summary.scalar('cumulative_rewards', data=sum_rewards, step=episode)
-                    tf.summary.scalar('chosen_work', data=actions[0], step=episode)
-                    tf.summary.scalar('chosen_sport', data=actions[1], step=episode)
-                    tf.summary.scalar('chosen_sociality', data=actions[2], step=episode)
+            mean_cumulative_rewards = utils.incremental_mean(mean_cumulative_rewards, sum_rewards, episode)
+
+
+        if self.log:
+            if eval_code is not None:
+                with self.train_writer.as_default():
+                    tf.summary.scalar('cumulative_rewards', data=mean_cumulative_rewards, step=eval_code)
+                    tf.summary.scalar('chosen_work', data=mean_actions[0], step=eval_code)
+                    tf.summary.scalar('chosen_sport', data=mean_actions[1], step=eval_code)
+                    tf.summary.scalar('chosen_sociality', data=mean_actions[2], step=eval_code)
             else:
-                sum_actions.append(actions)
-                cumulative_rewards.append(sum_rewards)
-            
-        print(f"Mean Cumulative Rewards: {mean_cumulative_rewards}")
+                with self.eval_writer.as_default():
+                    tf.summary.scalar('cumulative_rewards', data=mean_cumulative_rewards, step=eval_code)
+                    tf.summary.scalar('chosen_work', data=mean_actions[0], step=eval_code)
+                    tf.summary.scalar('chosen_sport', data=mean_actions[1], step=eval_code)
+                    tf.summary.scalar('chosen_sociality', data=mean_actions[2], step=eval_code)
+        else:
+            sum_actions.append(actions)
+            cumulative_rewards.append(sum_rewards)
+        
+        print(">>> Evaluation <<<")
+        print(f"\tMean Cumulative Rewards: {mean_cumulative_rewards}")
         
         if not self.log:
             return cumulative_rewards, sum_actions
