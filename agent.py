@@ -10,6 +10,7 @@ import memory
 import utils
 import datetime
 import os
+import gc
 
 
 class Agent(ABC):
@@ -157,14 +158,12 @@ class PPO_Agent(Agent):
     def get_action(self, x, action=None):
         '''Returns the selected action and the probability of that action'''
         logits = self.actor(x)
-        probs = tfp.distributions.Categorical(probs=logits)
+        probs = tfp.distributions.Categorical(logits=logits)
         if action is None:
             action = probs.sample(1)
-            prob = probs.prob(action)
-        else:
-            prob = probs.prob(action)
-        return action, prob, probs.entropy()
-
+            #prob = probs.prob(action)
+        return action.numpy(), probs.log_prob(action).numpy(), probs.entropy()
+        
     def get_logit(self, logits, actions):
         ll = []
         for a in range(len(actions)):
@@ -176,7 +175,7 @@ class PPO_Agent(Agent):
         probs = tfp.distributions.Categorical(probs=logits)
         if action is None:
             action = probs.sample(1)
-        return action, probs.prob(action), probs.entropy(), self.critic(x)
+        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
 
     def play_one_step(self, env, state, epsilon):
 
@@ -195,65 +194,174 @@ class PPO_Agent(Agent):
     # actor
     def _build_policy(self, input_shape, n_outputs):
         #bias_init = tf.keras.initializers.RandomUniform(minval=-0.05, maxval=0.05, seed=42)
-        k_initializer = tf.keras.initializers.Orthogonal()
-        self.actor = keras.Sequential([
+        k_initializer_1 = tf.keras.initializers.Orthogonal(gain=np.sqrt(2), seed=2)
+        k_initializer_2 = tf.keras.initializers.Orthogonal(gain=np.sqrt(2), seed=1)
+        #pol_initializer = tf.keras.initializers.Orthogonal(gain=0.01, seed=33)
+        pol_initializer = tf.keras.initializers.Orthogonal(gain=0.01, seed=3)
+        activ="tanh"
+        '''self.actor = keras.Sequential([
             keras.layers.Dense(128, name='actor_dense_1', activation="relu", input_shape=input_shape,
-                               kernel_initializer=k_initializer),
-            keras.layers.Dense(128, name='actor_dense_2', activation="relu", kernel_initializer=k_initializer),
-            keras.layers.Dense(units=n_outputs, name='actor_dense_output', activation="relu", kernel_initializer=k_initializer),
+                               #kernel_initializer='random_uniform',
+                                bias_initializer=bias_init),
+            keras.layers.Dense(128, name='actor_dense_2', activation="relu", 
+                               #kernel_initializer='random_uniform', 
+                               bias_initializer=bias_init),
+            keras.layers.Dense(units=n_outputs, name='actor_dense_output', activation="relu", 
+                               #kernel_initializer=pol_initializer, 
+                               #bias_initializer=bias_init
+                               ),
             keras.layers.Softmax(name='actor_dense_softmax')
         ])
-
+        
+        self.actor = keras.Sequential([
+            keras.layers.Dense(128, name='actor_dense_1', activation="relu", input_shape=input_shape),
+            keras.layers.Dense(128, name='actor_dense_2', activation="relu"),
+            keras.layers.Dense(units=n_outputs, name='actor_dense_output', activation="relu")
+            ])
+        '''
+        self.actor = keras.Sequential([
+            keras.layers.Dense(128, name='actor_dense_1', activation=activ, input_shape=input_shape,
+                               kernel_initializer=k_initializer_1,
+                                #bias_initializer=bias_init
+                                ),
+            keras.layers.Dense(128, name='actor_dense_2', activation=activ, 
+                               kernel_initializer=k_initializer_2, 
+                               #bias_initializer=bias_init
+                               ),
+            keras.layers.Dense(n_outputs, name='actor_dense_output', activation="linear",
+                               kernel_initializer=pol_initializer, 
+                               #bias_initializer=bias_init
+                               )
+                               ])
+        #'''
+ 
     # critic
     def _build_vfunction(self, input_shape):
-#        bias_init = tf.keras.initializers.RandomUniform(minval=-0.05, maxval=0.05, seed=19)
-        k_initializer = tf.keras.initializers.Orthogonal()
+        #bias_init = tf.keras.initializers.RandomUniform(minval=-0.05, maxval=0.05, seed=19)
+        k_initializer_1 = tf.keras.initializers.Orthogonal(gain=np.sqrt(2), seed=100)
+        k_initializer_2 = tf.keras.initializers.Orthogonal(gain=np.sqrt(2), seed=101)
+        val_initializer = tf.keras.initializers.Orthogonal(gain=1, seed=33)
+        activ='tanh'
+        '''
         self.critic = keras.Sequential([
-            keras.layers.Dense(256, name='critic_dense_1', activation="relu", input_shape=input_shape,
-                               kernel_initializer=k_initializer),
-            keras.layers.Dense(128, name='critic_dense_2', activation="relu", input_shape=input_shape,
-                               kernel_initializer=k_initializer),
+            keras.layers.Dense(128, name='critic_dense_1', activation="relu", input_shape=input_shape),
+            keras.layers.Dense(128, name='critic_dense_2', activation="relu"),
             keras.layers.Dense(1, name='critic_dense_output')
         ])
+        '''
+        
+        self.critic = keras.Sequential([
+            keras.layers.Dense(128, name='critic_dense_1', activation=activ, input_shape=input_shape,
+                               kernel_initializer=k_initializer_1#,
+                               #bias_initializer=bias_init
+                               ),
+            keras.layers.Dense(128, name='critic_dense_2', activation=activ,
+                               kernel_initializer=k_initializer_2#,
+                               #bias_initializer=bias_init
+                               ),
+            keras.layers.Dense(1, name='critic_dense_output', activation="linear",
+                               kernel_initializer=val_initializer
+                               )
+        ])
+        #'''
 
     @tf.function
     def train_step_ppo(self, obs, actions, adv, probs, returns):
-        
+
+        #actions = tf.constant(actions)
         #with tf.device('/physical_device/CPU:0'):
         with tf.GradientTape(persistent=True) as tape:
-                
-            _, new_probs, entropy = self.get_action(obs, actions)
-            new_value = self.get_value(obs)
-            #self.get_action_and_value
-            #new_probs = get_prob_from_action(new_probs, mb_action)
+            '''                
+            tape.watch(returns)
+            tape.watch(probs)
+            tape.watch(adv)
+            '''
 
-            ratio = tf.divide(new_probs, probs)
+            logits = self.actor(obs)
+            dist = tfp.distributions.Categorical(logits=logits)
             
-            clip = tf.clip_by_value(ratio, 1-self.epsilon, 1+self.epsilon) * adv
-            #clip = np.clip(ratio, 1-self.epsilon, 1+self.epsilon) * adv
-            loss_clip = tf.minimum(ratio * adv, clip)
-            #loss_clip = -tf.reduce_mean(loss_clip)
-            loss_clip = tf.reduce_mean(loss_clip)
+            new_probs = dist.log_prob(actions)
+            entropy = dist.entropy()
+        
+            #_, new_probs, entropy = self.get_action(obs, actions)
+            new_value = tf.squeeze(self.get_value(obs))
+
+            logdif = new_probs - probs
+            ratio = tf.math.exp(logdif)
+            clip = tf.clip_by_value(ratio, 1-self.epsilon, 1+self.epsilon)# * adv
             
-            loss_actor = -loss_clip - self.c2*entropy
-            loss_value = tf.reduce_mean(tf.square(returns - new_value))
-            #loss_value = tf.keras.losses.mse(m.f_returns[ids], new_value)
+            loss_a_clip = tf.multiply(clip, adv)
+            loss_a = tf.multiply(ratio, adv)
 
-            #loss = - loss_clip - loss_value
+            loss_actor = tf.math.negative(tf.minimum(loss_a_clip, loss_a))
+            loss_actor = tf.reduce_mean(loss_actor)
+            entropy = tf.reduce_mean(entropy)
+            loss_actor = loss_actor - self.c2*entropy
 
-        grads_actor = tape.gradient(loss_actor, self.actor.trainable_variables)
+            #loss_value = tf.keras.losses.mse(returns, new_value)
+            loss_value = tf.reduce_mean((new_value - returns) ** 2)
+
+            #loss = loss_actor + loss_value
+
         grads_critic = tape.gradient(loss_value, self.critic.trainable_variables)
+        grads_actor = tape.gradient(loss_actor, self.actor.trainable_variables)
+#        grads_critic = tape.gradient(loss, self.critic.trainable_variables)
+#        grads_actor = tape.gradient(loss, self.actor.trainable_variables)
         self.optimizer_actor.apply_gradients(zip(grads_actor, self.actor.trainable_variables))
         self.optimizer_critic.apply_gradients(zip(grads_critic, self.critic.trainable_variables))
-            
-        return loss_actor, loss_value
+
+        return loss_actor, loss_value, entropy
 
     def save_models(self, addstr = ""):
         v = "" if addstr == "" else "-"
         self.actor.save(filepath="models/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/actor" +f"{v}{addstr}" + "/")
         self.critic.save(filepath="models/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/critic" +f"{v}{addstr}" + "/")
 
-    def play_n_timesteps(self, envs: gym.vector.VectorEnv, mem: memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
+    @profile
+    def play_one_step(self, envs: gym.vector.VectorEnv, m: memory.Memory, step, observation):
+        
+        m.obss[step] = observation
+        
+        '''Returns the selected action and the probability of that action'''
+        logits = self.actor(observation, training=False)
+        dist = tfp.distributions.Categorical(logits=logits)
+        actions = dist.sample(1)
+        probs = dist.log_prob(actions)
+        entropy = dist.entropy()
+        
+        m.actions[step] = actions
+        m.probs[step] = probs
+        m.values[step] = self.get_value(observation).numpy().squeeze()
+        
+        # make the step(s)
+        observation, reward, terminated, truncated, info = envs.step(actions.numpy().squeeze().tolist())
+        
+        #ids_done = [terminated[i] == 1 or truncated[i] == 1 for i in range(len(t_eval_rewards))]
+        '''
+        tmp = np.logical_or(terminated, truncated)
+        if np.count_nonzero(tmp) > 0:
+            ids_done = np.argwhere(tmp).flatten()
+
+            for id in ids_done:
+                self.m_eval_rewards = utils.incremental_mean(self.m_eval_rewards, self.t_eval_rewards[id], e)
+                e += 1
+            # reset reward sum for the finished episodes
+            self.t_eval_rewards[ids_done] = 0
+        '''
+        
+#                for i in range(np.count_nonzero(ids_done)):
+#                    m_eval_rewards = utils.incremental_mean(m_eval_rewards, np.mean(t_eval_rewards[ids_done]), e)
+#                    e += 1
+
+        m.rewards[step] = reward
+        m.terminateds[step] = terminated
+        m.truncateds[step] = truncated
+
+        return observation
+
+
+    @profile
+    def play_n_timesteps(self, envs: gym.vector.VectorEnv, m: memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
 
         '''
         checkpoint_path_actor = "training_1_actor/model.ckpt"
@@ -272,50 +380,52 @@ class PPO_Agent(Agent):
         # Restore the weights
         #model.load_weights('./checkpoints/my_checkpoint')
 
-        #if not self.log:
-        update_mean_actor_loss = []
-        update_mean_critic_loss = []
-
-        mean_actor_loss = 0
-        n_a = 0
-        mean_critic_loss = 0
-        n_c = 0
+        mean_cumulative_rewards = 0
         last_mcr = 0
+        r = 0
         
-        batch = envs.num_envs * single_batch_ts
-        updates = t_timesteps // single_batch_ts
-        m = mem
-        #tau_loss = 
-        observation, info = envs.reset()
-        
-        alpha = 1
 
-        eval_frequency = 2
+        t_eval_rewards = np.zeros(shape=(envs.num_envs,))
+        m_eval_rewards = 0
+        e = 0
+
+        # evaluation settings
+        eval_frequency = 150
         evaluation = 0 # evaluation counter
 
         # seeds for evaluation
-        eval_n_episodes = 25
+        eval_n_episodes = 20
         eval_seeds = [int(x) for x in np.random.randint(1, 100000 + 1, size=eval_n_episodes)]
-        eval_env = gym.make('life_sim/LifeSim-v0', render_mode='text', max_timesteps=self.env_max_timesteps)
+        #eval_env = gym.make('CartPole-v1', render_mode='text', max_timesteps=self.env_max_timesteps)
+        eval_env = gym.make('CartPole-v1', render_mode='text')
         
+
+        # prepare the environments for training
+        observation, info = envs.reset()
+        batch = envs.num_envs * single_batch_ts
+        updates = t_timesteps // single_batch_ts
+        #m = mem
+
         for update in tqdm(range(updates)):
 
-            mean_cumulative_rewards = 0
+            mean_actor_loss = 0
+            mean_critic_loss = 0
+            mean_entropy = 0
+            c = 0
 
-            n_r = 0
+            t_eval_rewards = np.zeros(shape=(envs.num_envs,))
+            m_eval_rewards = 0
+            e = 0
 
-            #alpha = 1 - (update/(updates*0.85)) if alpha > 0 else 0
+            # update alpha
+            #alpha = 1
             alpha = 1 - (update/updates)
-            lr_actor = self.lr_actor * alpha
-            lr_critic = self.lr_critic * alpha
-            # create new adam (weight decay = 0, lr updated)
-            ###self.optimizer_actor = keras.optimizers.Adam(learning_rate=self.lr_critic)
-            self.optimizer_actor.learning_rate = lr_actor
-            ###self.optimizer_critic = keras.optimizers.Adam(learning_rate=self.lr_critic)
-            self.optimizer_critic.learning_rate = lr_critic
 
-            #print(f"a: {alpha}")
-            #print(f"e: {self.epsilon}")
+            # update the optimizer's learning rate
+            self.optimizer_actor.learning_rate = self.lr_actor * alpha
+            self.optimizer_critic.learning_rate = self.lr_critic * alpha
+
+            # update epsilon
             self.epsilon = self.epsilon * alpha
 
             #next_truncated = np.zeros(shape=(m.truncateds[0]))
@@ -323,35 +433,30 @@ class PPO_Agent(Agent):
             
             for t in range(single_batch_ts):
             
-                m.obss[t] = observation
-                #m.terminateds[t] = next_terminated
-                #m.truncateds[t] = next_truncated
-                #print(observation)
-                actions, probs, _ = self.get_action(observation)
-                m.values[t] = self.get_value(observation).numpy().squeeze()
+                observation = self.play_one_step(envs, m, t, observation)
 
-                # the Gymnasium Vectorized Environment step method takes a 1-dimensional list of actions as parameter  
-                observation, reward, terminated, truncated, info = envs.step(actions.numpy().squeeze().tolist())
-                
-                m.actions[t] = actions
-                m.probs[t] = probs
-                m.rewards[t] = reward
-                m.terminateds[t] = terminated
-                m.truncateds[t] = truncated
-                
-                mean_cumulative_rewards = utils.incremental_mean(mean_cumulative_rewards, np.mean(m.rewards[t]), n_r)
-                n_r += 1
-
+            #print(f"Mean episode return: {m_eval_rewards:.5f}")
             #print(f"last {last_mcr}")
             #next_val = self.get_value(observation[np.newaxis]).numpy().squeeze()
             next_val = self.get_value(observation).numpy().squeeze()
 
+#            m.rewards = (m.rewards - np.mean(m.rewards)) / np.std(m.rewards)
+
             # calc advantages
-            m.advantages = np.array([utils.calc_adv_list(single_batch_ts-1, 0, m.rewards[:, env_id], m.values[:, env_id], self._gamma,
-                                                self._lmbda, m.terminateds[:, env_id], m.truncateds[:, env_id]) for env_id in range(m.num_envs)], dtype=np.float32)
+#            m.advantages = np.zeros(shape=(m.timesteps, m.num_envs), dtype=np.float32)
+#            m.returns = np.zeros(shape=(m.timesteps, m.num_envs), dtype=np.float32)
+
+#            m.advantages = [utils.calc_adv_list(single_batch_ts-1, 0, m.rewards[:, env_id], m.values[:, env_id], self._gamma, self._lmbda, m.terminateds[:, env_id], m.truncateds[:, env_id]) for env_id in range(m.num_envs)]
+
+            # calculating advantages and putting them into m.advantages
+            utils.calc_advantages(single_batch_ts-1, m.advantages, m.rewards, m.values, next_val, self._gamma, self._lmbda, m.terminateds, m.truncateds)
+#            m.advantages = np.array([utils.calc_adv_list(single_batch_ts-1, 0, m.rewards[:, env_id], m.values[:, env_id], self._gamma,
+#                                                self._lmbda, m.terminateds[:, env_id], m.truncateds[:, env_id]) for env_id in range(m.num_envs)], dtype=np.float32).transpose()
+
             # calc returns
-            m.returns = np.array([utils.calc_returns(single_batch_ts-1, 0, m.rewards[:, env_id], self._gamma,
-                                            m.terminateds[:, env_id], m.truncateds[:, env_id]) for env_id in range(m.num_envs)], dtype=np.float32)
+#            m.returns = np.array([utils.calc_returns(single_batch_ts-1, 0, m.rewards[:, env_id], self._gamma,
+#                                            m.terminateds[:, env_id], m.truncateds[:, env_id]) for env_id in range(m.num_envs)], dtype=np.float32).transpose()
+            utils.calc_returns(single_batch_ts-1, m.returns, m.rewards, next_val, self._gamma, m.terminateds, m.truncateds)
 
             m.flatten()
 
@@ -364,68 +469,64 @@ class PPO_Agent(Agent):
 
                 np.random.shuffle(bch_ids)
 
-                for mb_start in np.arange(0, single_batch_ts, minibatch_size):
+                for start_ind in np.arange(0, single_batch_ts, minibatch_size):
 
-                    start_ind = mb_start
                     end_ind = start_ind + minibatch_size
 
                     ids = np.arange(start_ind, end_ind, 1)
 
-#                for mb in range(minibatch_size):
-
-                    mb_obs = np.array(m.f_obss[ids])
-                    mb_actions = np.array(m.f_actions[ids])
+                    #mb_obs = np.array(m.f_obss[ids])
+                    #mb_actions = np.array(m.f_actions[ids])
                     mb_adv = np.array(m.f_advantages[ids])
-                    mb_probs = np.array(m.f_probs[ids])
-                    mb_returns = np.array(m.f_returns[ids])
+                    #mb_probs = np.array(m.f_probs[ids])
+                    #mb_returns = np.array(m.f_returns[ids])
                     
-                    loss_actor, loss_critic = self.train_step_ppo(mb_obs, mb_actions, mb_adv, mb_probs, mb_returns)
+                    # advantages normalization
+                    mb_adv = (mb_adv - np.mean(mb_adv)) / (np.std(mb_adv) + 1e-8)
 
-                    mean_actor_loss = utils.incremental_mean(mean_actor_loss, np.mean(loss_actor), n_a)
-                    mean_critic_loss = utils.incremental_mean(mean_critic_loss, np.mean(loss_critic), n_c)
-                    n_a += 1
-                    n_c += 1
-                    mb_actor_loss_l.append(loss_actor)
-                    mb_critic_loss_l.append(loss_critic)
+                    #loss_actor, loss_critic, entropy = self.train_step_ppo(mb_obs, mb_actions, mb_adv, mb_probs, mb_returns)
+                    loss_actor, loss_critic, entropy = self.train_step_ppo(m.f_obss[ids],
+                                                                           m.f_actions[ids],
+                                                                           mb_adv,
+                                                                           m.f_probs[ids],
+                                                                           m.f_returns[ids])
 
-            #m.obss[t] = observation
-            #print(mean_cumulative_rewards)
+                    mean_actor_loss = utils.incremental_mean(mean_actor_loss, np.mean(loss_actor), c)
+                    mean_critic_loss = utils.incremental_mean(mean_critic_loss, np.mean(loss_critic), c)
+                    mean_entropy = utils.incremental_mean(mean_entropy, entropy, c)
+                    c += 1
+                    
+
             if update % eval_frequency == 0:
                 print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
                 evaluation += 1
-                self.evaluate(eval_n_episodes, eval_seeds, evaluation)
-                #print(f"Mean cumulative rewards of the last batch (per step): {mean_cumulative_rewards:.5}")
-                #print(f"Cumulative reward increment (wrt last mean): {mean_cumulative_rewards-last_mcr:.5}")
+                #self.evaluate(eval_n_episodes, eval_seeds, evaluation)
                 print()
-                last_mcr = mean_cumulative_rewards
-
             
             if self.log:
                 with self.train_writer.as_default():
-                    loss_act = np.mean(mb_actor_loss_l)
-                    loss_cri = np.mean(mb_critic_loss_l)
-                    tf.summary.scalar('loss_actor', data=loss_act, step=update)
-                    tf.summary.scalar('loss_critic', data=loss_cri, step=update)
+                    tf.summary.scalar('loss_actor', data=mean_actor_loss, step=update)
+                    tf.summary.scalar('loss_critic', data=mean_critic_loss, step=update)
+                    tf.summary.scalar('entropy', data=mean_entropy, step=update)
+                    tf.summary.scalar('m_eval_rewards', data=m_eval_rewards, step=update)
+                    tf.summary.scalar('lr_critic', data=self.optimizer_critic.learning_rate, step=update)
+                    tf.summary.scalar('lr_actor', data=self.optimizer_actor.learning_rate, step=update)
+                    tf.summary.scalar('returns mean', data=np.mean(m.f_returns), step=update)
+                    tf.summary.scalar('advantages mean', data=np.mean(m.f_advantages), step=update)
                     
                     if update % eval_frequency == 0:
-                        print(f"Actor loss: {loss_act:.5}")
-                        print(f"Critic loss: {loss_cri:.5}")
+                        print(f"Actor loss: {mean_actor_loss:.5}")
+                        print(f"Critic loss: {mean_critic_loss:.5}")
                         print()
-            else:
-                update_mean_actor_loss.append(np.mean(mb_actor_loss_l))
-                update_mean_critic_loss.append(np.mean(mb_critic_loss_l))
-        
+
+            m.reset()
+
         print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
         print("Training results")
         print()
         print(f"Mean Actor Loss: {mean_actor_loss}")
         print(f"Mean Critic Loss: {mean_critic_loss}")
-        print(f"Mean cumulative rewards of the last batch (per step): {mean_cumulative_rewards}")
-        #print(f"Cumulative reward increment (wrt last mean): {mean_cumulative_rewards-last_mcr}")
         print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
-        
-        if not self.log:
-            return update_mean_actor_loss, update_mean_critic_loss
 
     def evaluate(self, episodes, seeds, eval_code=None):
 
@@ -433,7 +534,8 @@ class PPO_Agent(Agent):
         # if reached, the environment is TRUNCATED by the TimeLimit wrapper
         #max_steps = 300
 
-        env = gym.make('life_sim/LifeSim-v0', render_mode='text', max_timesteps=self.env_max_timesteps)
+        #env = gym.make('CartPole-v1', render_mode='text', max_timesteps=self.env_max_timesteps)
+        env = gym.make('CartPole-v1', render_mode='text')
 
         if not self.log:
             cumulative_rewards = []
@@ -478,7 +580,7 @@ class PPO_Agent(Agent):
             # normalize actions selection
             m_a = np.max(actions)
             actions = np.divide(actions, m_a)
-            mean_actions = [utils.incremental_mean(mean_actions[id], actions[id], episode) for id in range(3)]
+            #mean_actions = [utils.incremental_mean(mean_actions[id], actions[id], episode) for id in range(len(actions))]
 
             mean_cumulative_rewards = utils.incremental_mean(mean_cumulative_rewards, sum_rewards, episode)
 
@@ -486,22 +588,22 @@ class PPO_Agent(Agent):
         if self.log:
             if eval_code is not None:
                 with self.train_writer.as_default():
-                    tf.summary.scalar('cumulative_rewards', data=mean_cumulative_rewards, step=eval_code)
-                    tf.summary.scalar('chosen_work', data=mean_actions[0], step=eval_code)
-                    tf.summary.scalar('chosen_sport', data=mean_actions[1], step=eval_code)
-                    tf.summary.scalar('chosen_sociality', data=mean_actions[2], step=eval_code)
+                    tf.summary.scalar('cumulative_rewards', data=mean_cumulative_rewards, step=eval_code, description="Metric inside training")
+                    tf.summary.scalar('chosen_work', data=actions[0], step=eval_code, description="Metric inside training")
+                    tf.summary.scalar('chosen_sport', data=actions[1], step=eval_code, description="Metric inside training")
+                    tf.summary.scalar('chosen_sociality', data=actions[2], step=eval_code, description="Metric inside training")
             else:
                 with self.eval_writer.as_default():
-                    tf.summary.scalar('cumulative_rewards', data=mean_cumulative_rewards, step=eval_code)
-                    tf.summary.scalar('chosen_work', data=mean_actions[0], step=eval_code)
-                    tf.summary.scalar('chosen_sport', data=mean_actions[1], step=eval_code)
-                    tf.summary.scalar('chosen_sociality', data=mean_actions[2], step=eval_code)
+                    tf.summary.scalar('cumulative_rewards', data=mean_cumulative_rewards, step=eval_code, description="Metric inside evaluation")
+                    tf.summary.scalar('chosen_work', data=actions[0], step=eval_code, description="Metric inside evaluation")
+                    tf.summary.scalar('chosen_sport', data=actions[1], step=eval_code, description="Metric inside evaluation")
+                    tf.summary.scalar('chosen_sociality', data=actions[2], step=eval_code, description="Metric inside evaluation")
         else:
             sum_actions.append(actions)
             cumulative_rewards.append(sum_rewards)
         
         print(">>> Evaluation <<<")
-        print(f"\tMean Cumulative Rewards: {mean_cumulative_rewards}")
+        print(f"\tMean Cumulative Rewards: {mean_cumulative_rewards:.3f}")
         
         if not self.log:
             return cumulative_rewards, sum_actions

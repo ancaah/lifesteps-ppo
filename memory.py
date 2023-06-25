@@ -31,14 +31,16 @@ class Memory():
         obs_shape = self.obs_shape
 
         self.obss = np.zeros(shape=(timesteps, num_envs) + obs_shape, dtype=np.float32)
-#        self.returns = np.zeros(shape=(timesteps, num_envs), dtype=np.float32)
+        
         self.actions = np.zeros(shape=(timesteps, num_envs), dtype=np.float32)
         self.rewards = np.zeros(shape=(timesteps, num_envs), dtype=np.float32)
         self.probs = np.zeros(shape=(timesteps, num_envs), dtype=np.float32)
         self.terminateds = np.zeros(shape=(timesteps, num_envs), dtype=np.float32)
         self.truncateds = np.zeros(shape=(timesteps, num_envs), dtype=np.float32)
         self.values = np.zeros(shape=(timesteps, num_envs), dtype=np.float32)
-#        self.advantages = np.zeros(shape=(timesteps, num_envs), dtype=np.float32)
+
+        self.advantages = np.zeros(shape=(timesteps, num_envs), dtype=np.float32)
+        self.returns = np.zeros(shape=(timesteps, num_envs), dtype=np.float32)
 
 
     def flatten(self):
@@ -50,6 +52,19 @@ class Memory():
         obs_shape = self.obs_shape
 
         #self.f_obss = self.obss.reshape((-1,) + obs_shape)
+        self.f_obss = self.obss.reshape((-1,) + obs_shape)
+        
+        self.f_actions = self.actions.reshape((-1,))
+        self.f_rewards = self.rewards.reshape((-1,))
+        self.f_probs = self.probs.reshape((-1,))
+        self.f_terminateds = self.terminateds.reshape((-1,))
+        self.f_truncateds = self.truncateds.reshape((-1,))
+        self.f_values = self.values.reshape((-1,))
+        
+        self.f_returns = self.returns.reshape((-1,))
+        self.f_advantages = self.advantages.reshape((-1,))
+        
+        '''
         self.f_obss = np.moveaxis(self.obss, 1, 0).reshape((-1,) + obs_shape)
         
         self.f_actions = self.actions.transpose().reshape((-1,))
@@ -61,5 +76,5 @@ class Memory():
         
         self.f_returns = self.returns.reshape((-1,))
         self.f_advantages = self.advantages.reshape((-1,))
-
+        '''
         #return f_obs, f_actions, f_rewards, f_terminateds, f_truncateds, f_probs, f_values, f_advantages, f_returns
