@@ -11,6 +11,7 @@ import utils
 import datetime
 import os
 import gc
+#from memory_profiler import profile
 
 
 class Agent(ABC):
@@ -123,13 +124,6 @@ class PPO_Agent(Agent):
             2: np.transpose([0, 0, 1]),
         }
 
-#        self._optimizer_actor = keras.optimizers.AdamW(learning_rate=lr)
-#        self._optimizer_critic = keras.optimizers.AdamW(learning_rate=lr)
-        # self._actor_loss_fn = actor_loss_fn
-        # self._critic_loss_fn = critic_loss_fn
-
-        # self._discount = discount_factor
-
         self.lr_actor = lr_actor
         self.lr_critic = lr_critic
         self.input_shape = input_shape
@@ -163,12 +157,6 @@ class PPO_Agent(Agent):
             action = probs.sample(1)
             #prob = probs.prob(action)
         return action.numpy(), probs.log_prob(action).numpy(), probs.entropy()
-        
-    def get_logit(self, logits, actions):
-        ll = []
-        for a in range(len(actions)):
-            ll.append(np.array([logits[a][aa] for aa in actions[a]]))
-        return ll
 
     def get_action_and_value(self, x, action=None):
         logits = self.actor(x)
@@ -176,12 +164,6 @@ class PPO_Agent(Agent):
         if action is None:
             action = probs.sample(1)
         return action, probs.log_prob(action), probs.entropy(), self.critic(x)
-
-    def play_one_step(self, env, state, epsilon):
-
-        action = np.argmax(self._policy(state, epsilon))
-        next_state, reward, terminated, truncated, info = env.step(action)
-        return next_state, reward, terminated, truncated, info, action
 
     def _build_network(self, input_shape, n_outputs):
         #self.optimizer_actor = keras.optimizers.AdamW(learning_rate=self.lr_actor)
@@ -270,22 +252,15 @@ class PPO_Agent(Agent):
 
         #actions = tf.constant(actions)
         #with tf.device('/physical_device/CPU:0'):
-        with tf.GradientTape(persistent=True) as tape:
-            '''                
-            tape.watch(returns)
-            tape.watch(probs)
-            tape.watch(adv)
-            '''
+        with tf.GradientTape() as tape1, tf.GradientTape() as tape2:
 
             logits = self.actor(obs)
             dist = tfp.distributions.Categorical(logits=logits)
             
             new_probs = dist.log_prob(actions)
             entropy = dist.entropy()
-        
             #_, new_probs, entropy = self.get_action(obs, actions)
-            new_value = tf.squeeze(self.get_value(obs))
-
+            new_value = tf.squeeze(self.critic(obs))
             logdif = new_probs - probs
             ratio = tf.math.exp(logdif)
             clip = tf.clip_by_value(ratio, 1-self.epsilon, 1+self.epsilon)# * adv
@@ -293,22 +268,26 @@ class PPO_Agent(Agent):
             loss_a_clip = tf.multiply(clip, adv)
             loss_a = tf.multiply(ratio, adv)
 
-            loss_actor = tf.math.negative(tf.minimum(loss_a_clip, loss_a))
-            loss_actor = tf.reduce_mean(loss_actor)
+            loss_value = tf.reduce_mean((new_value - returns) ** 2)
+
+#            loss_actor = tf.math.negative(tf.maximum(loss_a_clip, loss_a))
+            loss_actor = tf.negative(tf.reduce_mean(tf.minimum(loss_a_clip, loss_a)))
+            
             entropy = tf.reduce_mean(entropy)
             loss_actor = loss_actor - self.c2*entropy
 
             #loss_value = tf.keras.losses.mse(returns, new_value)
-            loss_value = tf.reduce_mean((new_value - returns) ** 2)
 
             #loss = loss_actor + loss_value
 
-        grads_critic = tape.gradient(loss_value, self.critic.trainable_variables)
-        grads_actor = tape.gradient(loss_actor, self.actor.trainable_variables)
+        grads_critic = tape1.gradient(loss_value, self.critic.trainable_variables)
+        grads_actor = tape2.gradient(loss_actor, self.actor.trainable_variables)
+        #print(f"crit: {grads_critic}")
+        #print(f"act: {grads_actor}")
 #        grads_critic = tape.gradient(loss, self.critic.trainable_variables)
 #        grads_actor = tape.gradient(loss, self.actor.trainable_variables)
-        self.optimizer_actor.apply_gradients(zip(grads_actor, self.actor.trainable_variables))
         self.optimizer_critic.apply_gradients(zip(grads_critic, self.critic.trainable_variables))
+        self.optimizer_actor.apply_gradients(zip(grads_actor, self.actor.trainable_variables))
 
         return loss_actor, loss_value, entropy
 
@@ -317,21 +296,27 @@ class PPO_Agent(Agent):
         self.actor.save(filepath="models/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/actor" +f"{v}{addstr}" + "/")
         self.critic.save(filepath="models/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/critic" +f"{v}{addstr}" + "/")
 
-    @profile
+
+    #@profile
     def play_one_step(self, envs: gym.vector.VectorEnv, m: memory.Memory, step, observation):
         
         m.obss[step] = observation
         
         '''Returns the selected action and the probability of that action'''
-        logits = self.actor(observation, training=False)
+        logits = self.actor(observation)
+        actions = tf.squeeze(tf.random.categorical(logits, 1), axis=1)
+        probs = tf.nn.log_softmax(logits)
+        probs = tf.reduce_sum(tf.one_hot(actions, self.n_outputs) * probs, axis=1)
+        
         dist = tfp.distributions.Categorical(logits=logits)
-        actions = dist.sample(1)
-        probs = dist.log_prob(actions)
+        #probs = dist.log_prob(actions)
+        #actions = dist.sample(1)
         entropy = dist.entropy()
         
         m.actions[step] = actions
         m.probs[step] = probs
-        m.values[step] = self.get_value(observation).numpy().squeeze()
+        #m.values[step] = self.get_value(observation).numpy().squeeze()
+        m.values[step] = tf.squeeze(self.get_value(observation))
         
         # make the step(s)
         observation, reward, terminated, truncated, info = envs.step(actions.numpy().squeeze().tolist())
@@ -360,7 +345,7 @@ class PPO_Agent(Agent):
         return observation
 
 
-    @profile
+    #@profile
     def play_n_timesteps(self, envs: gym.vector.VectorEnv, m: memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
 
         '''
@@ -390,15 +375,12 @@ class PPO_Agent(Agent):
         e = 0
 
         # evaluation settings
-        eval_frequency = 150
+        eval_frequency = 50
         evaluation = 0 # evaluation counter
 
         # seeds for evaluation
-        eval_n_episodes = 20
+        eval_n_episodes = 3
         eval_seeds = [int(x) for x in np.random.randint(1, 100000 + 1, size=eval_n_episodes)]
-        #eval_env = gym.make('CartPole-v1', render_mode='text', max_timesteps=self.env_max_timesteps)
-        eval_env = gym.make('CartPole-v1', render_mode='text')
-        
 
         # prepare the environments for training
         observation, info = envs.reset()
@@ -406,16 +388,19 @@ class PPO_Agent(Agent):
         updates = t_timesteps // single_batch_ts
         #m = mem
 
+        bch_ids = np.arange(0, single_batch_ts, 1)
+
         for update in tqdm(range(updates)):
+
+            m.reset()
 
             mean_actor_loss = 0
             mean_critic_loss = 0
             mean_entropy = 0
             c = 0
 
-            t_eval_rewards = np.zeros(shape=(envs.num_envs,))
-            m_eval_rewards = 0
-            e = 0
+            #t_eval_rewards = np.zeros(shape=(envs.num_envs,))
+            #e = 0
 
             # update alpha
             #alpha = 1
@@ -428,42 +413,39 @@ class PPO_Agent(Agent):
             # update epsilon
             self.epsilon = self.epsilon * alpha
 
-            #next_truncated = np.zeros(shape=(m.truncateds[0]))
-            #next_terminated = np.zeros(shape=(m.terminateds[0]))
-            
             for t in range(single_batch_ts):
             
                 observation = self.play_one_step(envs, m, t, observation)
 
-            #print(f"Mean episode return: {m_eval_rewards:.5f}")
-            #print(f"last {last_mcr}")
-            #next_val = self.get_value(observation[np.newaxis]).numpy().squeeze()
+                t_eval_rewards += m.rewards[t]
+                ids_done = [m.terminateds[t,i] == 1 or m.truncateds[t,i] == 1 for i in range(len(t_eval_rewards))]
+
+                tmp = np.logical_or(m.terminateds[t], m.truncateds[t])
+                if np.count_nonzero(tmp) > 0:
+                    ids_done = np.argwhere(tmp).flatten()
+
+                    for id in ids_done:
+                        m_eval_rewards = utils.incremental_mean(m_eval_rewards, t_eval_rewards[id], e)
+                        e += 1
+                    # reset reward sum for the finished episodes
+                    t_eval_rewards[ids_done] = 0
+
+        
+#                for i in range(np.count_nonzero(ids_done)):
+#                    m_eval_rewards = utils.incremental_mean(m_eval_rewards, np.mean(t_eval_rewards[ids_done]), e)
+#                    e += 1
+
             next_val = self.get_value(observation).numpy().squeeze()
 
 #            m.rewards = (m.rewards - np.mean(m.rewards)) / np.std(m.rewards)
-
-            # calc advantages
-#            m.advantages = np.zeros(shape=(m.timesteps, m.num_envs), dtype=np.float32)
-#            m.returns = np.zeros(shape=(m.timesteps, m.num_envs), dtype=np.float32)
-
-#            m.advantages = [utils.calc_adv_list(single_batch_ts-1, 0, m.rewards[:, env_id], m.values[:, env_id], self._gamma, self._lmbda, m.terminateds[:, env_id], m.truncateds[:, env_id]) for env_id in range(m.num_envs)]
-
             # calculating advantages and putting them into m.advantages
-            utils.calc_advantages(single_batch_ts-1, m.advantages, m.rewards, m.values, next_val, self._gamma, self._lmbda, m.terminateds, m.truncateds)
-#            m.advantages = np.array([utils.calc_adv_list(single_batch_ts-1, 0, m.rewards[:, env_id], m.values[:, env_id], self._gamma,
-#                                                self._lmbda, m.terminateds[:, env_id], m.truncateds[:, env_id]) for env_id in range(m.num_envs)], dtype=np.float32).transpose()
-
-            # calc returns
-#            m.returns = np.array([utils.calc_returns(single_batch_ts-1, 0, m.rewards[:, env_id], self._gamma,
-#                                            m.terminateds[:, env_id], m.truncateds[:, env_id]) for env_id in range(m.num_envs)], dtype=np.float32).transpose()
-            utils.calc_returns(single_batch_ts-1, m.returns, m.rewards, next_val, self._gamma, m.terminateds, m.truncateds)
+            utils.calc_advantages(single_batch_ts, m.advantages, m.rewards, m.values, next_val, self._gamma, self._lmbda, m.terminateds, m.truncateds)
+            utils.calc_returns(single_batch_ts, m.returns, m.rewards, next_val, self._gamma, m.terminateds, m.truncateds)
 
             m.flatten()
 
             mb_actor_loss_l = []
             mb_critic_loss_l = []
-
-            bch_ids = np.arange(0, single_batch_ts, 1)
 
             for epoch in range(epochs):
 
@@ -472,18 +454,12 @@ class PPO_Agent(Agent):
                 for start_ind in np.arange(0, single_batch_ts, minibatch_size):
 
                     end_ind = start_ind + minibatch_size
+                    ids = bch_ids[start_ind:end_ind]
 
-                    ids = np.arange(start_ind, end_ind, 1)
-
-                    #mb_obs = np.array(m.f_obss[ids])
-                    #mb_actions = np.array(m.f_actions[ids])
-                    mb_adv = np.array(m.f_advantages[ids])
-                    #mb_probs = np.array(m.f_probs[ids])
-                    #mb_returns = np.array(m.f_returns[ids])
-                    
                     # advantages normalization
+                    mb_adv = np.array(m.f_advantages[ids])
                     mb_adv = (mb_adv - np.mean(mb_adv)) / (np.std(mb_adv) + 1e-8)
-
+                    
                     #loss_actor, loss_critic, entropy = self.train_step_ppo(mb_obs, mb_actions, mb_adv, mb_probs, mb_returns)
                     loss_actor, loss_critic, entropy = self.train_step_ppo(m.f_obss[ids],
                                                                            m.f_actions[ids],
@@ -500,7 +476,7 @@ class PPO_Agent(Agent):
             if update % eval_frequency == 0:
                 print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
                 evaluation += 1
-                #self.evaluate(eval_n_episodes, eval_seeds, evaluation)
+                self.evaluate(eval_n_episodes, eval_seeds, evaluation, render_mode=None)
                 print()
             
             if self.log:
@@ -513,29 +489,15 @@ class PPO_Agent(Agent):
                     tf.summary.scalar('lr_actor', data=self.optimizer_actor.learning_rate, step=update)
                     tf.summary.scalar('returns mean', data=np.mean(m.f_returns), step=update)
                     tf.summary.scalar('advantages mean', data=np.mean(m.f_advantages), step=update)
-                    
-                    if update % eval_frequency == 0:
-                        print(f"Actor loss: {mean_actor_loss:.5}")
-                        print(f"Critic loss: {mean_critic_loss:.5}")
-                        print()
-
-            m.reset()
-
-        print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
-        print("Training results")
-        print()
-        print(f"Mean Actor Loss: {mean_actor_loss}")
-        print(f"Mean Critic Loss: {mean_critic_loss}")
-        print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
-
-    def evaluate(self, episodes, seeds, eval_code=None):
+        
+    def evaluate(self, episodes, seeds, eval_code=None, render_mode=None):
 
         # max number of steps for each episode of the simulator.
         # if reached, the environment is TRUNCATED by the TimeLimit wrapper
         #max_steps = 300
 
         #env = gym.make('CartPole-v1', render_mode='text', max_timesteps=self.env_max_timesteps)
-        env = gym.make('CartPole-v1', render_mode='text')
+        env = gym.make('life_sim/LifeSim-v0', render_mode=render_mode, max_timesteps=self.env_max_timesteps)
 
         if not self.log:
             cumulative_rewards = []
@@ -565,25 +527,25 @@ class PPO_Agent(Agent):
 
                 action, _ , _= self.get_action(obs[np.newaxis])
 
-                action = action.numpy().squeeze().tolist()
-                new_obs, reward, terminated, truncated, info = env.step(action)
+                action = action.squeeze().tolist()
+                obs, reward, terminated, truncated, info = env.step(action)
 
                 actions = actions + self.actions_array[action]
 
                 sum_rewards += reward
         #        actions = actions + actions_array[v_info['last_action']]
 
-                #env.render()
+                if render_mode != 'human' and render_mode != None:
+                    env.render()
                 if terminated or truncated:
                     break
 
             # normalize actions selection
-            m_a = np.max(actions)
-            actions = np.divide(actions, m_a)
+            m_a = np.sum(actions)
+            actions = actions / m_a
             #mean_actions = [utils.incremental_mean(mean_actions[id], actions[id], episode) for id in range(len(actions))]
 
             mean_cumulative_rewards = utils.incremental_mean(mean_cumulative_rewards, sum_rewards, episode)
-
 
         if self.log:
             if eval_code is not None:
@@ -607,3 +569,5 @@ class PPO_Agent(Agent):
         
         if not self.log:
             return cumulative_rewards, sum_actions
+        
+        env.close()

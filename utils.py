@@ -11,23 +11,23 @@ def calc_advantages(T, adv, rewards, values, next_val, gamma, lmbda, terminated,
 
     # first "iteration", to fill the whole advantage vector with significant values
     # otherwise we should put 0 at the last column
-    delta = rewards[T] + gamma*next_val*done[T] - values[T]
-    adv[T] = last_v = delta
+    last_v = rewards[T-1] + gamma*next_val*done[T-1] - values[T-1]
+    adv[T-1] = last_v
 
     for t in reversed(range(T-1)):
         delta = rewards[t] + gamma*values[t+1]*done[t] - values[t]
-        adv[t] = last_v = gamma*lmbda*done[t]*last_v + delta
+        adv[t] = last_v = delta + gamma*lmbda*done[t]*last_v
 
     return adv
 
 
 def calc_returns(T, ret, rewards, next_val, gamma, terminated, truncated):
+    
     done = 1- np.maximum(terminated, truncated)
 
-    ret[T] = last_r = rewards[T] + gamma*next_val*done[T]
-
-    for t in reversed(range(T-1)):
-        ret[t] = last_r = rewards[t] + gamma*last_r*done[t]
+    for t in reversed(range(T)):
+        ret[t] = last_r = rewards[t] + gamma*next_val*done[t]
+        next_val = last_r
 
     return ret
 

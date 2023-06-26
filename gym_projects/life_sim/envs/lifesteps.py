@@ -4,7 +4,7 @@ from gymnasium.spaces import Box, Discrete
 import numpy as np
 
 
-class LifeSim(Env):
+class LifeSteps(Env):
     '''Life Simulation Environment for the Autonomous Adaptive Systems'''
 
     metadata = {"render_modes": ["text"]}
@@ -37,7 +37,7 @@ class LifeSim(Env):
         # reward collected
         self.collected_reward = 0
         # reward lambda
-        self.l_1 = 2.5
+        self.l_1 = 2
         self.l_2 = 0.5
 
 
@@ -46,7 +46,7 @@ class LifeSim(Env):
 
         self._action_outcome_mapping = {
             # Work
-            0: [1, 0, 0.21, 0],
+            0: [1, 0, 0.3, 0],
             # Sport
             1: [0, 1, 0, 0],
             # Sociality
@@ -62,9 +62,10 @@ class LifeSim(Env):
 
     def accumulate_reward(self):
         '''accumulate the total reward using this method'''
-        return self.l_1*(self.state[self.obs_dict["work_development"]]
-                         + self.state[self.obs_dict["social_development"]])
-        #return self.l_1*self.state[self.obs_dict["social_development"]]
+        scale = self.state[self.obs_dict["work_development"]] + self.state[self.obs_dict["social_development"]]
+        scale = scale//5
+        
+        return self.l_1*scale
 
     def _get_obs(self):
         return self.state
@@ -101,18 +102,18 @@ class LifeSim(Env):
         observation = self._get_obs()
         info = self._get_info()
 
+        #self.collected_reward += self.accumulate_reward()
         self.collected_reward = self.accumulate_reward()
 
         truncated = True if self._current_timestep == self._max_timesteps else False
         
         terminated = (self.state[self.obs_dict["money"]] == 0 or self.state[self.obs_dict["health"]] == 0)
         
+        #  reward = self.collected_reward if truncated else 0
+        #  reward = -10+self.collected_reward if terminated else 0
         reward = self.collected_reward if truncated else 0
-        reward = -10 if terminated else reward
-        #reward = -1+self.collected_reward if terminated else 0
-        #reward = self.collected_reward if terminated or truncated else 0
-        #reward = reward if not terminated else -1
-
+        reward = -1 if terminated else 0
+        
         self._set_info(new_state, action, reward)
 
         #self.render()
@@ -146,17 +147,10 @@ class LifeSim(Env):
         np.random.seed(seed)
         space = np.linspace(2.5, 3.5, 50)
 
-        '''
         self.state = np.array([space[np.random.randint(0, len(space))],
                                space[np.random.randint(0, len(space))],
-                               space[np.random.randint(0, len(space))] / 3.5,
-                               space[np.random.randint(0, len(space))] / 3.5], dtype=np.float32)
-        '''
-        self.state = np.array([space[np.random.randint(0, len(space))],
-                               space[np.random.randint(0, len(space))],
-                               0,
-                               0], dtype=np.float32)
-        
+                               space[np.random.randint(0, len(space))] / 2.5,
+                               space[np.random.randint(0, len(space))] / 2.5], dtype=np.float32)
         self.collected_reward = 0
         self._current_timestep = 0
         #self._max_timesteps = max_timesteps

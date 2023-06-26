@@ -1,5 +1,10 @@
-gym_projects/life_sim.egg-info
+gym_projects/*.egg-info
 *.zip
 logs
 models
 __pycache__
+notes.ipynb
+*.dat
+exported.py
+test.py
+notes.txt
