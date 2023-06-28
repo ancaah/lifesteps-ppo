@@ -181,6 +181,7 @@ class PPO_Agent(Agent):
         #pol_initializer = tf.keras.initializers.Orthogonal(gain=0.01, seed=33)
         pol_initializer = tf.keras.initializers.Orthogonal(gain=0.01, seed=3)
         activ="tanh"
+        units=32
         '''self.actor = keras.Sequential([
             keras.layers.Dense(128, name='actor_dense_1', activation="relu", input_shape=input_shape,
                                #kernel_initializer='random_uniform',
@@ -202,11 +203,11 @@ class PPO_Agent(Agent):
             ])
         '''
         self.actor = keras.Sequential([
-            keras.layers.Dense(128, name='actor_dense_1', activation=activ, input_shape=input_shape,
+            keras.layers.Dense(units, name='actor_dense_1', activation=activ, input_shape=input_shape,
                                kernel_initializer=k_initializer_1,
                                 #bias_initializer=bias_init
                                 ),
-            keras.layers.Dense(128, name='actor_dense_2', activation=activ, 
+            keras.layers.Dense(units, name='actor_dense_2', activation=activ, 
                                kernel_initializer=k_initializer_2, 
                                #bias_initializer=bias_init
                                ),
@@ -224,6 +225,7 @@ class PPO_Agent(Agent):
         k_initializer_2 = tf.keras.initializers.Orthogonal(gain=np.sqrt(2), seed=101)
         val_initializer = tf.keras.initializers.Orthogonal(gain=1, seed=33)
         activ='tanh'
+        units=32
         '''
         self.critic = keras.Sequential([
             keras.layers.Dense(128, name='critic_dense_1', activation="relu", input_shape=input_shape),
@@ -233,11 +235,11 @@ class PPO_Agent(Agent):
         '''
         
         self.critic = keras.Sequential([
-            keras.layers.Dense(128, name='critic_dense_1', activation=activ, input_shape=input_shape,
+            keras.layers.Dense(units, name='critic_dense_1', activation=activ, input_shape=input_shape,
                                kernel_initializer=k_initializer_1#,
                                #bias_initializer=bias_init
                                ),
-            keras.layers.Dense(128, name='critic_dense_2', activation=activ,
+            keras.layers.Dense(units, name='critic_dense_2', activation=activ,
                                kernel_initializer=k_initializer_2#,
                                #bias_initializer=bias_init
                                ),
@@ -296,10 +298,24 @@ class PPO_Agent(Agent):
         self.actor.save(filepath="models/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/actor" +f"{v}{addstr}" + "/")
         self.critic.save(filepath="models/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/critic" +f"{v}{addstr}" + "/")
 
+    def unpack_observation(self, obs):
+        r = np.zeros(shape=(obs['life'].shape[0],5))
+        r[:,:3] = obs['life']
+        r[:,3] = obs['friends']
+        r[:,4] = obs['target']
+        return r.squeeze()
+    
+    def unpack_observation_single(self, obs):
+        r = np.zeros(shape=(5,))
+        r[:3] = obs['life']
+        r[3] = obs['friends']
+        r[4] = obs['target']
+        return r
 
     #@profile
     def play_one_step(self, envs: gym.vector.VectorEnv, m: memory.Memory, step, observation):
         
+        #need to unpack observation (only) for the LifeSteps environment
         m.obss[step] = observation
         
         '''Returns the selected action and the probability of that action'''
@@ -320,70 +336,38 @@ class PPO_Agent(Agent):
         
         # make the step(s)
         observation, reward, terminated, truncated, info = envs.step(actions.numpy().squeeze().tolist())
-        
-        #ids_done = [terminated[i] == 1 or truncated[i] == 1 for i in range(len(t_eval_rewards))]
-        '''
-        tmp = np.logical_or(terminated, truncated)
-        if np.count_nonzero(tmp) > 0:
-            ids_done = np.argwhere(tmp).flatten()
-
-            for id in ids_done:
-                self.m_eval_rewards = utils.incremental_mean(self.m_eval_rewards, self.t_eval_rewards[id], e)
-                e += 1
-            # reset reward sum for the finished episodes
-            self.t_eval_rewards[ids_done] = 0
-        '''
-        
-#                for i in range(np.count_nonzero(ids_done)):
-#                    m_eval_rewards = utils.incremental_mean(m_eval_rewards, np.mean(t_eval_rewards[ids_done]), e)
-#                    e += 1
 
         m.rewards[step] = reward
         m.terminateds[step] = terminated
         m.truncateds[step] = truncated
-
+        
+        #observation = self.unpack_observation(observation)
         return observation
 
 
     #@profile
-    def play_n_timesteps(self, envs: gym.vector.VectorEnv, m: memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs):
-
-        '''
-        checkpoint_path_actor = "training_1_actor/model.ckpt"
-        checkpoint_path_critic = "training_1_critic/model.ckpt"
-        checkpoint_dir_actor = os.path.dirname(checkpoint_path_actor)
-        checkpoint_dir_critic = os.path.dirname(checkpoint_path_critic)
-        '''
-
-
-        # Save the weights
-        #model.save_weights('./checkpoints/my_checkpoint')
-
-        # Create a new model instance
-        #model = create_model()
-
-        # Restore the weights
-        #model.load_weights('./checkpoints/my_checkpoint')
+    def play_n_timesteps(self, envs: gym.vector.VectorEnv, m: memory.Memory, t_timesteps, single_batch_ts, minibatch_size, epochs, difficulty = 0):
 
         mean_cumulative_rewards = 0
         last_mcr = 0
-        r = 0
-        
+        r = 0        
 
         t_eval_rewards = np.zeros(shape=(envs.num_envs,))
         m_eval_rewards = 0
         e = 0
 
         # evaluation settings
-        eval_frequency = 50
+        eval_frequency = 25
         evaluation = 0 # evaluation counter
 
         # seeds for evaluation
-        eval_n_episodes = 3
+        eval_n_episodes = 1
         eval_seeds = [int(x) for x in np.random.randint(1, 100000 + 1, size=eval_n_episodes)]
 
         # prepare the environments for training
         observation, info = envs.reset()
+        #observation = self.unpack_observation(observation)
+
         batch = envs.num_envs * single_batch_ts
         updates = t_timesteps // single_batch_ts
         #m = mem
@@ -430,14 +414,10 @@ class PPO_Agent(Agent):
                     # reset reward sum for the finished episodes
                     t_eval_rewards[ids_done] = 0
 
-        
-#                for i in range(np.count_nonzero(ids_done)):
-#                    m_eval_rewards = utils.incremental_mean(m_eval_rewards, np.mean(t_eval_rewards[ids_done]), e)
-#                    e += 1
 
             next_val = self.get_value(observation).numpy().squeeze()
 
-#            m.rewards = (m.rewards - np.mean(m.rewards)) / np.std(m.rewards)
+            m.rewards = (m.rewards - np.mean(m.rewards)) / (np.std(m.rewards) +1e-8)
             # calculating advantages and putting them into m.advantages
             utils.calc_advantages(single_batch_ts, m.advantages, m.rewards, m.values, next_val, self._gamma, self._lmbda, m.terminateds, m.truncateds)
             utils.calc_returns(single_batch_ts, m.returns, m.rewards, next_val, self._gamma, m.terminateds, m.truncateds)
@@ -472,32 +452,38 @@ class PPO_Agent(Agent):
                     mean_entropy = utils.incremental_mean(mean_entropy, entropy, c)
                     c += 1
                     
-
-            if update % eval_frequency == 0:
-                print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
-                evaluation += 1
-                self.evaluate(eval_n_episodes, eval_seeds, evaluation, render_mode=None)
-                print()
-            
             if self.log:
                 with self.train_writer.as_default():
                     tf.summary.scalar('loss_actor', data=mean_actor_loss, step=update)
                     tf.summary.scalar('loss_critic', data=mean_critic_loss, step=update)
                     tf.summary.scalar('entropy', data=mean_entropy, step=update)
-                    tf.summary.scalar('m_eval_rewards', data=m_eval_rewards, step=update)
+                    if e > 0:
+                        tf.summary.scalar('m_eval_rewards', data=m_eval_rewards, step=update)
                     tf.summary.scalar('lr_critic', data=self.optimizer_critic.learning_rate, step=update)
                     tf.summary.scalar('lr_actor', data=self.optimizer_actor.learning_rate, step=update)
                     tf.summary.scalar('returns mean', data=np.mean(m.f_returns), step=update)
                     tf.summary.scalar('advantages mean', data=np.mean(m.f_advantages), step=update)
+
+            if update % eval_frequency == 0:
+                print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
+                evaluation += 1
+                self.evaluate(eval_n_episodes, eval_seeds, evaluation, render_mode=None, difficulty=difficulty)
+                print()
+                
+                # resetting the evaluation mean reward 
+                m_eval_rewards = 0
+                e = 0
+                
         
-    def evaluate(self, episodes, seeds, eval_code=None, render_mode=None):
+    def evaluate(self, episodes, seeds, eval_code=None, render_mode=None, difficulty = 0):
 
         # max number of steps for each episode of the simulator.
         # if reached, the environment is TRUNCATED by the TimeLimit wrapper
         #max_steps = 300
 
         #env = gym.make('CartPole-v1', render_mode='text', max_timesteps=self.env_max_timesteps)
-        env = gym.make('life_sim/LifeSim-v0', render_mode=render_mode, max_timesteps=self.env_max_timesteps)
+        #env = gym.make('life_sim/LifeSim-v0', render_mode=render_mode, max_timesteps=self.env_max_timesteps)
+        env = gym.make('life_steps/LifeSteps-v0', render_mode=render_mode, max_timesteps=self.env_max_timesteps, difficulty = difficulty)
 
         if not self.log:
             cumulative_rewards = []
@@ -520,6 +506,7 @@ class PPO_Agent(Agent):
             actions = np.transpose([0, 0, 0])
 
             obs, info = env.reset(seed=seeds[t])
+            #obs = self.unpack_observation_single(obs)
             t += 1
 
             #for step in np.arange(1, max_steps, 1):
@@ -529,6 +516,7 @@ class PPO_Agent(Agent):
 
                 action = action.squeeze().tolist()
                 obs, reward, terminated, truncated, info = env.step(action)
+                #obs = self.unpack_observation_single(obs)
 
                 actions = actions + self.actions_array[action]
 
