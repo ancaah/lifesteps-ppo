@@ -74,7 +74,7 @@ class LifeSteps(Env):
     def _render_text(self):
         '''Returns a text representation of the state'''
         i = self._get_info()
-        str = f"| Life ->\t{i['life']}  -   {i['friends']}"
+        str = f"| Life ->\t{i.get('life')}  -   {'F: many!!!' if i.get('friends') else 'F: alone..'}"
         if i.get('last_action') < 0:
             str = f"{str}, I just started playing!"
         else:
@@ -82,7 +82,11 @@ class LifeSteps(Env):
             
 
             if self.gamemode == 'monopoly' and i.get('trouble') != -1:
-                str = f"{str}\t\t| {i.get('trouble')} {i.get('points_loss')} points loss"
+                if i.get('friends'):
+                    f = np.random.choice(['Piz', 'Leandro', 'Dave', 'Dudu'])
+
+                p = i.get('points_loss')
+                str = f"{str}\t\t| {i.get('trouble')}{f'but {f} helped,' if i.get('friends') and p < 0 else ''} {f'{p} points loss' if p <= 0 else ''}"
 
             if i.get('done') == True:
                 str = f"{str}\n\n--! Game finished with reward {i['last_reward']} !--\n"
@@ -114,13 +118,13 @@ class LifeSteps(Env):
 
                 trouble_type = np.random.choice([money, health])
                 trouble_deficit = np.zeros(shape=(3,), dtype=self.arrtype)
-                trouble_deficit[trouble_type] = -10 if self._friends == 0 else -10 + np.random.random_integers(8)
+                trouble_deficit[trouble_type] = -10 if self._friends == 0 else -4 + np.random.randint(4)
 
                 self._life += trouble_deficit
 
                 self._set_info(None, None, None, None, None, trouble_type, np.min(trouble_deficit))
             else:
-                self._set_info()    # sets all info to None
+                self._set_info()    # sets all info to their default value
                 self._trouble_probability += self._trouble_prob_inc
                 self._trouble_probability = min(self._trouble_probability, 1)
                     
@@ -128,7 +132,7 @@ class LifeSteps(Env):
 
         # friends = 1 if the social development of the player goes upper than 50
         # or if he already has friends
-        self._friends = 1 if self._life[social] > 50 else self._friends
+        self._friends = 1 if self._life[social] > 40 else self._friends
         self._life = np.clip(self._life, a_min=0, a_max=100, dtype=self.arrtype)
 
         observation = self._get_obs()
@@ -158,7 +162,8 @@ class LifeSteps(Env):
         
         if self.gamemode == 'monopoly':
             self._trouble_probability = 0
-            self._trouble_prob_inc = np.random.choice([0.01, 0.03, 0.08])
+            self._trouble_prob_inc = 0.03
+            #self._trouble_prob_inc = np.random.choice([0.01, 0.03, 0.08])
 
         s_life = np.arange(25, 35, 1)
         
@@ -202,7 +207,7 @@ class LifeSteps(Env):
                 "last_action": self.i_action,
                 "last_reward": self.i_reward,
                 "life": f"M: {self.i_life[money]},   H: {self.i_life[health]},   S: {self.i_life[social]}",
-                "friends": "F: alone.." if self.i_friends == 0 else "F: many!!!"
+                "friends": self.i_friends
             }
 
         if self.gamemode == 'monopoly':
@@ -212,7 +217,7 @@ class LifeSteps(Env):
         return d
 
 
-    def _set_info(self, life = None, friends = None, action = None, reward = None, done = None, trouble = -1, points_loss = -1):
+    def _set_info(self, life = None, friends = None, action = None, reward = None, done = None, trouble = -1, points_loss = 1):
         self.i_done = self.i_done if done is None else done
         self.i_action = self.i_action if action is None else action
         self.i_reward = self.i_reward if reward is None else reward
