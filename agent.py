@@ -107,7 +107,7 @@ class DQN_Agent(Agent):
 
 
 class PPO_Agent(Agent):
-    def __init__(self, input_shape, n_outputs, gamma, lmbda, epsilon, c2, lr_actor, lr_critic, log = False, log_dir = None, env_max_timesteps=300, init_personal = True, verbose=0):
+    def __init__(self, input_shape, n_outputs, gamma, lmbda, epsilon, c2, lr_actor, lr_critic, log = False, log_dir = None, env_max_timesteps=300, init_personal = True, units=32, verbose=0):
 
         self._verbose = verbose
 
@@ -128,7 +128,7 @@ class PPO_Agent(Agent):
         self.input_shape = input_shape
         self.n_outputs = n_outputs
 
-        self._build_network(input_shape, n_outputs, init_personal = init_personal)
+        self._build_network(input_shape, n_outputs, init_personal = init_personal, units=units)
     
         #self.log_dir = log_dir
         if log == True:
@@ -161,10 +161,10 @@ class PPO_Agent(Agent):
             action = probs.sample(1)
         return action, probs.log_prob(action), probs.entropy(), self.critic(x)
 
-    def _build_network(self, input_shape, n_outputs, init_personal = True):
+    def _build_network(self, input_shape, n_outputs, init_personal = True, units=32):
 
-        self._build_policy(input_shape, n_outputs, init_personal = init_personal)
-        self._build_vfunction(input_shape, init_personal = init_personal)
+        self._build_policy(input_shape, n_outputs, init_personal = init_personal, units=units)
+        self._build_vfunction(input_shape, init_personal = init_personal, units=units)
 
         self.optimizer_actor = keras.optimizers.Adam(learning_rate=self.lr_actor)
         self.optimizer_critic = keras.optimizers.Adam(learning_rate=self.lr_critic)
@@ -172,7 +172,7 @@ class PPO_Agent(Agent):
         self.optimizer_critic.build(self.critic.trainable_variables)
 
     # actor
-    def _build_policy(self, input_shape, n_outputs, init_personal = True):
+    def _build_policy(self, input_shape, n_outputs, init_personal = True, units=32):
         
         if init_personal:
             k_initializer_1 = tf.keras.initializers.Orthogonal(gain=np.sqrt(2), seed=2)
@@ -180,7 +180,6 @@ class PPO_Agent(Agent):
             pol_initializer = tf.keras.initializers.Orthogonal(gain=0.01, seed=3)
     
         activ="tanh"
-        units=32
 
         self.actor = keras.Sequential([
                 Dense(units, name = 'actor_dense_1', activation=activ, input_shape=input_shape,
@@ -196,14 +195,14 @@ class PPO_Agent(Agent):
         ])
  
     # critic
-    def _build_vfunction(self, input_shape, init_personal = True):
+    def _build_vfunction(self, input_shape, init_personal = True, units=32):
         
         if init_personal:
             k_initializer_1 = tf.keras.initializers.Orthogonal(gain=np.sqrt(2), seed=100)
             k_initializer_2 = tf.keras.initializers.Orthogonal(gain=np.sqrt(2), seed=101)
             val_initializer = tf.keras.initializers.Orthogonal(gain=1, seed=33)
+        
         activ='tanh'
-        units=32
         
         self.critic = keras.Sequential([
             Dense(units, name = 'critic_dense_1', activation=activ, input_shape=input_shape,
@@ -259,18 +258,14 @@ class PPO_Agent(Agent):
 
     def save_models(self, addstr = ""):
         v = "" if addstr == "" else "-"
-#        tf.saved_model.save(self.actor, "models/actor" +f"{v}{addstr}" + "/")
-#        tf.saved_model.save(self.critic, "models/critic" +f"{v}{addstr}" + "/")
-        self.actor.save_weights("models/actor" +f"{v}{addstr}" +"/checkpoint.ckpt")
-        self.critic.save_weights("models/critic" +f"{v}{addstr}" +"/checkpoint.ckpt")
+        self.actor.save_weights("models/actor/final" +f"{v}{addstr}" +"/checkpoint.ckpt")
+        self.critic.save_weights("models/critic/final" +f"{v}{addstr}" +"/checkpoint.ckpt")
 
 
     def load_models(self, addstr = ""):
         v = "" if addstr == "" else "-"
-#        self.critic = tf.saved_model.load('models/critic' +f"{v}{addstr}")
-#        self.actor = tf.saved_model.load('models/actor' +f"{v}{addstr}")
-        self.actor.load_weights("models/actor" +f"{v}{addstr}" +"/checkpoint.ckpt")
-        self.critic.load_weights("models/critic" +f"{v}{addstr}" +"/checkpoint.ckpt")
+        self.actor.load_weights("models/actor/final" +f"{v}{addstr}" +"/checkpoint.ckpt")
+        self.critic.load_weights("models/critic/final" +f"{v}{addstr}" +"/checkpoint.ckpt")
         self.optimizer_actor.build(self.actor.trainable_variables)
         self.optimizer_critic.build(self.actor.trainable_variables)
 
@@ -331,7 +326,7 @@ class PPO_Agent(Agent):
         e = 0
 
         # evaluation settings
-        eval_frequency = 10
+        eval_frequency = 50
         evaluation = 0 # evaluation counter
         good = 0 # how many consecutive eval score > 0
 
@@ -448,10 +443,10 @@ class PPO_Agent(Agent):
                 m_eval_rewards = 0
                 e = 0
 
-                # stop the training process only with 3 consecutive mean score > 0
+                # stop the training process only with 6 consecutive mean score > 0
                 if r > 0:
                     good += 1
-                    if good == 4:
+                    if good == 6:
                         return
                 else:
                     good = 0
@@ -758,12 +753,12 @@ class PPO_AgentPro(Agent):
         e = 0
 
         # evaluation settings
-        eval_frequency = 10
+        eval_frequency = 50
         evaluation = 0 # evaluation counter
         good = 0 # how many consecutive eval score > 0
 
         # seeds for evaluation
-        eval_n_episodes = 10
+        eval_n_episodes = 15
         eval_seeds = [int(x) for x in np.random.randint(1, 100000 + 1, size=eval_n_episodes)]
 
         # prepare the environments for training
@@ -876,9 +871,9 @@ class PPO_AgentPro(Agent):
                 e = 0
 
                 # stop the training process only with 3 consecutive mean score > 0
-                if r > 0:
+                if r == 1:
                     good += 1
-                    if good == 4:
+                    if good == 8:
                         return
                 else:
                     good = 0
