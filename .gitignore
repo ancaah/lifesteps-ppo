@@ -1,6 +1,6 @@
 gym_projects/*.egg-info
 *.zip
-logs
+./logs
 models
 __pycache__
 notes.ipynb
