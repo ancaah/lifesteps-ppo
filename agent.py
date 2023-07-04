@@ -10,6 +10,7 @@ import gymnasium as gym
 from tqdm.notebook import tqdm
 import memory
 import utils
+from scipy import stats
 #from memory_profiler import profile
 
 
@@ -154,11 +155,17 @@ class PPO_Agent(Agent):
         with tf.GradientTape() as tape1, tf.GradientTape() as tape2:
 
             logits = self.actor(obs)
+            
             dist = tfp.distributions.Categorical(logits=logits)
-            
             new_probs = dist.log_prob(actions)
-            entropy = dist.entropy()
+            entropy = tf.reduce_mean(dist.entropy())
             
+            new_probs = tf.math.log(tf.nn.softmax(logits))
+            
+            new_probs = tf.reduce_sum(tf.one_hot(actions, self.n_outputs) * new_probs, axis=1)
+
+            #entropy = stats.entropy(new_probs)
+
             new_value = tf.squeeze(self.critic(obs))
             
             logdif = new_probs - probs
@@ -173,7 +180,7 @@ class PPO_Agent(Agent):
 
             loss_actor = tf.negative(tf.reduce_mean(tf.minimum(loss_a_clip, loss_a)))
             
-            entropy = tf.reduce_mean(entropy)
+            #entropy = tf.reduce_mean(entropy)
             loss_actor = loss_actor - self.c2*entropy
 
         grads_critic = tape1.gradient(loss_value, self.critic.trainable_variables)
@@ -212,8 +219,9 @@ class PPO_Agent(Agent):
         m.obss[step] = observation
         
         logits = self.actor(observation, training=False)
-        actions = tf.squeeze(tf.random.categorical(logits, 1), axis=1)
-        
+        p = tf.nn.softmax(logits).numpy().squeeze()
+        actions = np.array([np.random.choice(self.n_outputs, p=p[i]) for i in range(len(p))], dtype=int)
+
         probs = tf.nn.log_softmax(logits)
         probs = tf.reduce_sum(tf.one_hot(actions, self.n_outputs) * probs, axis=1)
         
@@ -222,7 +230,7 @@ class PPO_Agent(Agent):
         m.values[step] = tf.squeeze(self.get_value(observation))
         
         # make the step(s)
-        observation, reward, terminated, truncated, info = envs.step(actions.numpy().squeeze().tolist())
+        observation, reward, terminated, truncated, info = envs.step(actions.squeeze().tolist())
 
         m.rewards[step] = reward
         m.terminateds[step] = terminated
@@ -343,6 +351,7 @@ class PPO_Agent(Agent):
                     
                     # optimization step
                     loss_actor, loss_critic, entropy = self.train_step_ppo(m.f_obss[ids],
+                    #loss_actor, loss_critic = self.train_step_ppo(m.f_obss[ids],
                                                                            m.f_actions[ids],
                                                                            mb_adv,
                                                                            m.f_probs[ids],
@@ -408,7 +417,17 @@ class PPO_Agent(Agent):
         
         np.random.shuffle(seeds)
 
+        if render_mode is not None:
+            print("STARTING EVALUATION")
+            print()
+
         for episode in np.arange(0, n_episodes, 1):
+
+            if render_mode is not None:
+                print("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
+                print(f"Seed: {seeds[episode]}")
+                print()
+                print()
 
             sum_rewards = 0
             actions = np.transpose([0, 0, 0])
@@ -417,9 +436,13 @@ class PPO_Agent(Agent):
             
             while True:    
 
-                action, _ , _= self.get_action(obs[np.newaxis])
+                #action, _ , _= self.get_action(obs[np.newaxis])
 
-                action = action.squeeze().tolist()
+                logits = self.actor(obs[np.newaxis], training=False)
+
+                p = tf.nn.softmax(logits).numpy().squeeze()
+                action = np.random.choice(self.n_outputs, p=p)
+
                 obs, reward, terminated, truncated, info = env.step(action)
             
                 actions = actions + self.actions_array[action]

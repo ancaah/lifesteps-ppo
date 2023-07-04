@@ -32,7 +32,7 @@ class Memory():
 
         self.obss = np.zeros(shape=(timesteps, num_envs) + obs_shape, dtype=np.float32)
         
-        self.actions = np.zeros(shape=(timesteps, num_envs), dtype=np.float32)
+        self.actions = np.zeros(shape=(timesteps, num_envs), dtype=np.int32)
         self.rewards = np.zeros(shape=(timesteps, num_envs), dtype=np.float32)
         self.probs = np.zeros(shape=(timesteps, num_envs), dtype=np.float32)
         self.terminateds = np.zeros(shape=(timesteps, num_envs), dtype=np.float32)
