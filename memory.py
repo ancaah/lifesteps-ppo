@@ -47,8 +47,6 @@ class Memory():
         '''Creates, inside the Memory object, a flattened instance of the np.ndarrays already initialized'''
         self._flattened = True
 
-        timesteps = self.timesteps
-        num_envs = self.num_envs
         obs_shape = self.obs_shape
 
         #self.f_obss = self.obss.reshape((-1,) + obs_shape)

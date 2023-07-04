@@ -33,9 +33,8 @@ def calc_returns(T, ret, rewards, next_val, gamma, terminated, truncated):
 
 
 ##############################################################
-#   Recursive and
-#   Deprecated methods
-#
+#   Recursive methods
+#   Not used in the final code
 #
 def calc_adv_list_wlast(T, t, rewards, values, gamma, lmbda, terminated, truncated, next_val):
     r = []

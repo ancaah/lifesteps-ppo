@@ -3,7 +3,6 @@ from abc import ABC
 import tensorflow as tf
 from tensorflow import keras
 from keras.layers import Dense
-from keras.initializers import Orthogonal
 import numpy as np
 import tensorflow_probability as tfp
 import gymnasium as gym
@@ -37,7 +36,7 @@ class Agent(ABC):
         pass
 
 class PPO_Agent(Agent):
-    
+    '''Agent implementing PPO algorithm, to be used in Gymnasium environments'''
     
     def __init__(self, input_shape, n_outputs, gamma, lmbda, epsilon, c2, lr_actor, lr_critic, log = False, log_dir = None, env_max_timesteps=300, init_personal = True, units=32, verbose=0):
 
@@ -69,24 +68,10 @@ class PPO_Agent(Agent):
         }
 
         # set up for Tensorboard logging
-        if log == True:
+        if log is True:
             self.log_dir = log_dir
             self.log = log
             self.logger = tf.summary.create_file_writer(log_dir + "/metrics")
-
-
-    def get_value(self, x):
-        return self.critic(x)
-
-
-    def get_action(self, x, action=None):
-        '''Returns the selected action and the probability of that action'''
-        logits = self.actor(x)
-        probs = tfp.distributions.Categorical(logits=logits)
-        if action is None:
-            action = probs.sample(1)
-            #prob = probs.prob(action)
-        return action.numpy(), probs.log_prob(action).numpy(), probs.entropy()
 
 
     def _build_network(self, input_shape, n_outputs, init_personal = True, units=32):
@@ -227,10 +212,10 @@ class PPO_Agent(Agent):
         
         m.actions[step] = actions
         m.probs[step] = probs
-        m.values[step] = tf.squeeze(self.get_value(observation))
+        m.values[step] = tf.squeeze(self.critic(observation))
         
         # make the step(s)
-        observation, reward, terminated, truncated, info = envs.step(actions.squeeze().tolist())
+        observation, reward, terminated, truncated, _ = envs.step(actions.squeeze().tolist())
 
         m.rewards[step] = reward
         m.terminateds[step] = terminated
@@ -303,11 +288,13 @@ class PPO_Agent(Agent):
             
                 observation = self.play_one_step(envs, m, t, observation)
 
+                # partial sum of the rewards
                 t_eval_rewards += m.rewards[t]
 
-                ids_done = [m.terminateds[t,i] == 1 or m.truncateds[t,i] == 1 for i in range(len(t_eval_rewards))]
-
+                # check which environments concluded an episode
                 tmp = np.logical_or(m.terminateds[t], m.truncateds[t])
+
+                # if some environment finished an episode, update the mean reward
                 if np.count_nonzero(tmp) > 0:
 
                     # indexes of environments that terminated an episode
@@ -323,7 +310,7 @@ class PPO_Agent(Agent):
 
 
             # will be used to compute advantages and returns
-            next_val = self.get_value(observation).numpy().squeeze()
+            next_val = self.critic(observation).numpy().squeeze()
 
             # reward normalization in the range [-1,+1] (to comment or change if the environment is not LifeSteps)
             m.rewards = self.reward_transformer(m.rewards, self.env_max_timesteps, difficulty)
@@ -434,9 +421,7 @@ class PPO_Agent(Agent):
 
             obs, info = env.reset(seed=seeds[episode])
             
-            while True:    
-
-                #action, _ , _= self.get_action(obs[np.newaxis])
+            while True:
 
                 logits = self.actor(obs[np.newaxis], training=False)
 
