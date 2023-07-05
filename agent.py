@@ -12,30 +12,7 @@ import utils
 from scipy import stats
 #from memory_profiler import profile
 
-
-class Agent(ABC):
-    def __init__(self):
-        pass
-
-    def predict(self, *args, **kwargs):
-        pass
-
-    def train(self, *args, **kwargs):
-        pass
-
-    def _calc_loss(self, *args, **kwargs):
-        pass
-
-    def play_one_step(self, *args, **kwargs):
-        pass
-
-    def play_episode(self, *args, **kwargs):
-        pass
-
-    def _policy(self, *args, **kwargs):
-        pass
-
-class PPO_Agent(Agent):
+class PPO_Agent():
     '''Agent implementing PPO algorithm, to be used in Gymnasium environments'''
     
     def __init__(self, input_shape, n_outputs, gamma, lmbda, epsilon, c2, lr_actor, lr_critic, log = False, log_dir = None, env_max_timesteps=300, init_personal = True, units=32, verbose=0):
@@ -140,22 +117,17 @@ class PPO_Agent(Agent):
         with tf.GradientTape() as tape1, tf.GradientTape() as tape2:
 
             logits = self.actor(obs)
-            
+
             dist = tfp.distributions.Categorical(logits=logits)
-            new_probs = dist.log_prob(actions)
             entropy = tf.reduce_mean(dist.entropy())
-            
+
             new_probs = tf.math.log(tf.nn.softmax(logits))
-            
             new_probs = tf.reduce_sum(tf.one_hot(actions, self.n_outputs) * new_probs, axis=1)
-
-            #entropy = stats.entropy(new_probs)
-
             new_value = tf.squeeze(self.critic(obs))
             
             logdif = new_probs - probs
-            
             ratio = tf.math.exp(logdif)
+
             clip = tf.clip_by_value(ratio, 1-self.epsilon_t, 1+self.epsilon_t)# * adv
             
             loss_a_clip = tf.multiply(clip, adv)
@@ -164,8 +136,6 @@ class PPO_Agent(Agent):
             loss_value = tf.reduce_mean((new_value - returns) ** 2)
 
             loss_actor = tf.negative(tf.reduce_mean(tf.minimum(loss_a_clip, loss_a)))
-            
-            #entropy = tf.reduce_mean(entropy)
             loss_actor = loss_actor - self.c2*entropy
 
         grads_critic = tape1.gradient(loss_value, self.critic.trainable_variables)
@@ -200,20 +170,20 @@ class PPO_Agent(Agent):
     # new state
 
     def play_one_step(self, envs: gym.vector.VectorEnv, m: memory.Memory, step, observation):
-        
+
         m.obss[step] = observation
-        
+
         logits = self.actor(observation, training=False)
         p = tf.nn.softmax(logits).numpy().squeeze()
         actions = np.array([np.random.choice(self.n_outputs, p=p[i]) for i in range(len(p))], dtype=int)
 
         probs = tf.nn.log_softmax(logits)
         probs = tf.reduce_sum(tf.one_hot(actions, self.n_outputs) * probs, axis=1)
-        
+
         m.actions[step] = actions
         m.probs[step] = probs
         m.values[step] = tf.squeeze(self.critic(observation))
-        
+
         # make the step(s)
         observation, reward, terminated, truncated, _ = envs.step(actions.squeeze().tolist())
 
@@ -316,8 +286,24 @@ class PPO_Agent(Agent):
             m.rewards = self.reward_transformer(m.rewards, self.env_max_timesteps, difficulty)
             
             # calculating advantages and returns, filling the memory m
-            utils.calc_advantages(single_batch_ts, m.advantages, m.rewards, m.values, next_val, self._gamma, self._lmbda, m.terminateds, m.truncateds)
-            utils.calc_returns(single_batch_ts, m.returns, m.rewards, next_val, self._gamma, m.terminateds, m.truncateds)
+            utils.calc_advantages(single_batch_ts, 
+                                  m.advantages, 
+                                  m.rewards, 
+                                  m.values, 
+                                  next_val, 
+                                  self._gamma, 
+                                  self._lmbda, 
+                                  m.terminateds, 
+                                  m.truncateds)
+            
+            utils.calc_returns(single_batch_ts, 
+                               m.returns, 
+                               m.rewards, 
+                               next_val, 
+                               self._gamma, 
+                               m.terminateds, 
+                               m.truncateds)
+
 
             # flatten all the numpy structures in the memory
             m.flatten()
@@ -334,7 +320,7 @@ class PPO_Agent(Agent):
 
                     # advantages normalization
                     mb_adv = np.array(m.f_advantages[ids])
-                    mb_adv = (mb_adv - np.mean(mb_adv)) / (np.std(mb_adv) + 1e-8)
+                    mb_adv = (mb_adv - np.mean(mb_adv)) / (np.std(mb_adv) + 1e-8)                                   # CleanRL PPO
                     
                     # optimization step
                     loss_actor, loss_critic, entropy = self.train_step_ppo(m.f_obss[ids],
@@ -383,7 +369,8 @@ class PPO_Agent(Agent):
                         return
                 else:
                     good = 0
-                
+
+
     # reward normalization ONLY TO BE USED WITH LifeSteps CUSTOM ENVIRONMENT
     def reward_transformer(self, rewards, max_ts, difficulty):
         

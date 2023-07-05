@@ -2,11 +2,12 @@ import numpy as np
 
 # new iterative functions
 
+# calculates advantages including the last term, using the first state-value outside of
+# the scope of the batch. This method was inspired by the CleanRL implementation of PPO,
+# after an initial recursive design.
+
 def calc_advantages(T, adv, rewards, values, next_val, gamma, lmbda, terminated, truncated):
-    # T should have been passed as T-1 because of array indexing
-    # Note: terminated and truncated are not temporal synchronized with other vectors
-    # terminated[t] is true if at time t, with obs[t+1], the episode is terminated
-    # values[t] is referred to obs[t], while next_val is referred to obs T+1
+    # support array used to remove from the sum of a delta the sum of the successive delta
     done = 1- np.maximum(terminated, truncated)
 
     # first "iteration", to fill the whole advantage vector with significant values
@@ -20,9 +21,11 @@ def calc_advantages(T, adv, rewards, values, next_val, gamma, lmbda, terminated,
 
     return adv
 
+# calculates returns including the last term, using the first state-value outside of
+# the scope of the batch
 
 def calc_returns(T, ret, rewards, next_val, gamma, terminated, truncated):
-    
+    # support array used to remove from the sum of a return the sum of next discounted rewards
     done = 1- np.maximum(terminated, truncated)
 
     for t in reversed(range(T)):
@@ -32,10 +35,20 @@ def calc_returns(T, ret, rewards, next_val, gamma, terminated, truncated):
     return ret
 
 
+# performs an incremental mean update
+
+def incremental_mean(mean, val, n):
+    return (mean*n + val)/(n+1)
+
 ##############################################################
-#   Recursive methods
-#   Not used in the final code
+#   First (and recursive) set of methods for calculation of
+#   advantages and returns. Not used in the final code
+#   but still working
 #
+
+# advantages calculation: variant which uses the first state-value outside of the scope of the batch
+#                           for the last advantage calculation
+
 def calc_adv_list_wlast(T, t, rewards, values, gamma, lmbda, terminated, truncated, next_val):
     r = []
 
@@ -49,6 +62,7 @@ def calc_adv_list_wlast(T, t, rewards, values, gamma, lmbda, terminated, truncat
     r.append(p)
     return r
 
+# advantages calculation: variant which puts the last term to 0
 
 def calc_adv_list(T, t, rewards, values, gamma, lmbda, terminated, truncated):
     r = []
@@ -64,6 +78,9 @@ def calc_adv_list(T, t, rewards, values, gamma, lmbda, terminated, truncated):
     r.append(p)
     return r
     
+
+# recursive support function for calc_adv_list and calc_adv_list_wlast
+
 def calc_delta_list_r(T, t, rewards, values, gamma, lmbda, terminated, truncated, p, r):
     # calculating the t(th) factor
     done = 1- max(terminated[T], truncated[T])
@@ -76,6 +93,9 @@ def calc_delta_list_r(T, t, rewards, values, gamma, lmbda, terminated, truncated
         calc_delta_list_r(T-1, t, rewards, values, gamma, lmbda, terminated, truncated, p, r)
         r.append(p)
         return p
+
+
+# calculates returns just considering the actual rewards
 
 def calc_returns_list(T, t, rewards, gamma, terminated, truncated):
     r = []
@@ -90,6 +110,9 @@ def calc_returns_list(T, t, rewards, gamma, terminated, truncated):
     r.append(p)
     return r
 
+
+# support recursive function for calc_returns_list
+
 def calc_returns_r(T, t, rewards, gamma, terminated, truncated, p, r):
     # calculating the t(th) factor
     done = 1 - max(terminated[T], truncated[T])
@@ -102,6 +125,3 @@ def calc_returns_r(T, t, rewards, gamma, terminated, truncated, p, r):
         calc_returns_r(T-1, t, rewards, gamma, terminated, truncated, p, r)
         r.append(p)
         return p
-    
-def incremental_mean(mean, val, n):
-    return (mean*n + val)/(n+1)

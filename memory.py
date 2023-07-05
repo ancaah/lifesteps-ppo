@@ -1,5 +1,7 @@
 import numpy as np
 
+# the general idea of separating the memory instance from the agent to have a cleaner code was taken by
+# https://github.com/philtabor/Youtube-Code-Repository/blob/master/ReinforcementLearning/PolicyGradient/PPO/tf2/memory.py
 
 class Memory():
     def __init__(self, num_envs, obs_shape, timesteps):
