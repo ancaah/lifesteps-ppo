@@ -15,7 +15,21 @@ from scipy import stats
 class PPO_Agent():
     '''Agent implementing PPO algorithm, to be used in Gymnasium environments'''
     
-    def __init__(self, input_shape, n_outputs, gamma, lmbda, epsilon, c2, lr_actor, lr_critic, log = False, log_dir = None, env_max_timesteps=300, init_personal = True, units=32, verbose=0):
+    def __init__(self, 
+                input_shape,                    # input shape - observation
+                n_outputs,                      # number of actions
+                gamma,                          # PPO: discount
+                lmbda,                          # PPO: GAE parameter
+                epsilon,                        # PPO: epsilon
+                c2,                             # PPO: entropy bonus
+                lr_actor,                       # learning rate actor's network
+                lr_critic,                      # learning rate critic's network
+                log = False,                    # if True, Tensorboard starts logging data on disk
+                log_dir = None,                 # directory where to store the logs
+                env_max_timesteps=300,          # length of an episode, in timesteps
+                init_personal = True,           # if True, initializes the network with orthogonal weights
+                units=32,                       # number of units in the hidden layers of actor and critic networks
+                verbose=0):
 
         self._verbose = verbose
 
@@ -165,9 +179,9 @@ class PPO_Agent():
         self.optimizer_critic.build(self.actor.trainable_variables)
 
     
-    # plays a single timesteps for all the environments in the vector, calculating the 
+    # plays a single timestep for all the environments in the vector, calculating the 
     # correct action for each of them. The memory is updated with the observation of the
-    # new state
+    # new states
 
     def play_one_step(self, envs: gym.vector.VectorEnv, m: memory.Memory, step, observation):
 
@@ -385,6 +399,8 @@ class PPO_Agent():
         env = gym.make('life_steps/LifeSteps-v0', render_mode=render_mode, max_timesteps=self.env_max_timesteps, difficulty = difficulty, gamemode = gamemode)
 
         mean_cumulative_rewards = 0
+
+        # vector of percentages of selected actions wrt the total number of taken actions
         mean_actions = np.zeros(shape=(3,))
 
         n_episodes = episodes
