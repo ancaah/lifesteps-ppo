@@ -78,10 +78,10 @@ The \textbf{life} of the player is the main information contained in each observ
 There is also another value, called \textbf{friends}, which tells if the player has at least one friend. This value doesn't have neither good or bad implications in this gamemode, but it will be important in \textit{monopoly} episodes. 
 
 The \textbf{actions} that the player can perform are three: go to \textit{work}, do some \textit{sport}, enjoy a \textit{social} occasion. 
-Each action is linked to a part of the state. When performing an action, the corresponding life's value will receive a bonus. The other two components will decrease in a deterministic way. 
+Each action is linked to a part of the state. When performing an action, the corresponding life value will receive a bonus. The other two components will decrease in a deterministic way. 
 The difficulty of this simulation is on making the right choices to avoid death (\(\Leftrightarrow\) game is lost), which can happen at any time, when money or health reach the value 0. 
 
-For example, doing sports for a timestep will give a 7 points bonus to the health value, but at the same time the money and social values will decrease of respectively 5 and 1 points.
+For example, doing sports for a timestep will give a 7 points bonus to the health value, but at the same time the money and social values will decrease by 5 and 1 points, respectively.
 
 The \textbf{reward is given to the player only at the end of the simulation}. The simulation has a fixed length. The reward is calculated using this formula \textit{if the player didn't reach the end of the game}:
 \begin{displaymath}
@@ -91,7 +91,7 @@ The \textbf{reward is given to the player only at the end of the simulation}. Th
 \begin{displaymath}
     reward = min(life[i]) - difficulty, i=[money, health, sociality]
 \end{displaymath}
-with \(life[i]\) being the values about money, health and sociality, and \textit{difficulty} being an initialization parameter of the environment. \textit{If the player \textbf{wins} the game}, which means that all the life's components have a value higher than the difficulty parameter, the \textbf{reward is 1}.
+with \(life[i]\) being the values about money, health and sociality, and \textit{difficulty} being an initialization parameter of the environment. \textit{If the player \textbf{wins} the game}, which means that all the life's components have values higher than the difficulty parameter, the \textbf{reward is 1}.
 
 \subsection{The monopoly gamemode}
 
@@ -99,7 +99,7 @@ In the Monopoly game mode of LifeSteps, similar to the popular table game, playe
 
 The possibility of encountering chance cards events is balanced by another game mechanic, which has no effects in the standard mode: the player's \textbf{friends} state. This information is represented by a boolean value, and it can change only in one direction, from False to True, when the \textit{social} development of the player goes above 40 points. 
 
-Having a friend in this gamemode provides a significant reduction in the penalties imposed by chance cards events. This features adds variety to the game.
+Having a friend in this gamemode provides a significant reduction in the penalties imposed by chance cards events. This feature adds variety to the game.
 
 \paragraph{Summary of game settings and behaviour} 
 Life's components (money, health, social) are sampled in the range \([25, 35)\) at each environment's reset. Friend's starting value is always 0. The difficulty level is chosen by the user when creating the environment. In the monopoly gamemode, the penalty in life values in the chance of a troubled event is 10 if the player has no friends, otherwise is sampled in the range \([0,4]\). The probability \(p\) is 0 at episode's start, then grows of 0.03 at each timestep, until an event comes up.
