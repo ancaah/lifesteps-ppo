@@ -4,7 +4,7 @@ Author: [Daniel Bernardi](http://github.com/ancaah)
 
 This project consists in two main parts:
 - the creation of a customized Gymnasium environment
-- the implementation of a PPO Agent
+- the implementation of a Proximal Policy Optimization Agent
 
 the final.ipynb notebook contains all the python code used to train and evaluate the PPO agent. Contains also the output from a previous execution.
 
